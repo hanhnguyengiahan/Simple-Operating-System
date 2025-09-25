@@ -46,7 +46,7 @@ int start_timer(unsigned char *timer_vaddr)
 
     clock.regs = (meson_timer_reg_t *)(timer_vaddr + TIMER_REG_START);
     
-    // start the internal counter, assume the tick frequency is in microseconds
+    // start the internal counter, assume the tick frequency is 100us
     configure_timestamp(clock.regs, TIMESTAMP_TIMEBASE_1_US);
     
     // allow timers to be registered
@@ -64,12 +64,38 @@ timestamp_t get_time(void) {
     return read_timestamp(clock.regs);
 }
 
+// Returns true when exist a timeout task to configure. Returns false when no timeout task exists.
+bool reconfigure_timer_to_next_earliest_timeout() {
+    struct sc_heap_data *next_earliest_timeout;
+    while ( next_earliest_timeout = sc_heap_peek(&clock.timeout_heap) ) {
+        if (next_earliest_timeout == NULL) {
+            return false;
+        }
+        
+        struct timeout_data *next_earliest_timeout_data = next_earliest_timeout->data;
+
+        bool removed = false;
+        cset__contains(&clock.removed_ids, next_earliest_timeout_data->id , &removed);
+        if (removed) {
+            sc_heap_pop(&clock.timeout_heap);
+            continue;
+        }
+
+        timestamp_t next_earliest_timeout = next_earliest_timeout_data->timeout_timestamp;
+        uint16_t num_ticks = (next_earliest_timeout - get_time()) / 100;
+        printf("num sticks: %d \n", num_ticks);
+        configure_timeout(clock.regs, MESON_TIMER_A, true, true, TIMEOUT_TIMEBASE_100_US, num_ticks);
+        break;
+    }
+
+    return true;
+}
+
 uint32_t register_timer(uint64_t delay, timer_callback_t callback, void *data)
-{   
-    // configure_timeout(clock.regs, MESON_TIMER_A, true, false, TIMEOUT_TIMEBASE_1_US, delay);
+{
     // get the id for this timer
     uint32_t timer_id = clock.next_timer_id;
-   
+
     // update to next id
     if (clock.next_timer_id == UINT32_MAX) { // when id is currently UINT32_MAX, next id must be 1, due to `register_timer()` return value requirements (returns 0 on failure)
         clock.next_timer_id = 1;
@@ -92,29 +118,21 @@ uint32_t register_timer(uint64_t delay, timer_callback_t callback, void *data)
     if (!ret) {
         return 0;
     }
-
+    
+    struct sc_heap_data *current_timeout = sc_heap_peek(&clock.timeout_heap);
+    
     ret = reconfigure_timer_to_next_earliest_timeout();
 
     if (!ret) {
         return 0;
     }
 
+    current_timeout = sc_heap_peek(&clock.timeout_heap);
+
     cset__add(&clock.used_ids, timer_id);
     return timer_id;
 }
 
-bool reconfigure_timer_to_next_earliest_timeout() {
-    struct timeout_data *next_earliest_timeout_data = sc_heap_peek(&clock.timeout_heap);
-    if (next_earliest_timeout_data == NULL) {
-        return false;
-    }
-    
-    timestamp_t next_earliest_timeout = next_earliest_timeout_data->timeout_timestamp;
-    uint16_t num_ticks = next_earliest_timeout - get_time();
-    configure_timeout(clock.regs, MESON_TIMER_A, true, false, TIMEOUT_TIMEBASE_1_US, num_ticks);
-
-    return true;
-}
 int remove_timer(uint32_t id)
 {
     bool used = false;
@@ -123,14 +141,14 @@ int remove_timer(uint32_t id)
         return CLOCK_R_FAIL;
     }
     // if the timeout is already being processed, then we pop it out of the heap and disable the timer
-    struct timeout_data *next_earliest_timeout_data = sc_heap_peek(&clock.timeout_heap);
-    if (next_earliest_timeout_data == NULL) {
+    struct sc_heap_data *next_earliest_timeout = sc_heap_peek(&clock.timeout_heap);
+    if (next_earliest_timeout == NULL) {
         return CLOCK_R_FAIL;
     }
-
-    if (next_earliest_timeout_data->id == id) {
+    struct timeout_data *timeout_data = next_earliest_timeout->data;
+    if (timeout_data->id == id) {
         // disable the timeout timer
-        configure_timeout(clock.regs, MESON_TIMER_A, false, false, TIMEOUT_TIMEBASE_1_US, 0);
+        configure_timeout(clock.regs, MESON_TIMER_A, false, false, TIMEOUT_TIMEBASE_1_MS, 0);
         sc_heap_pop(&clock.timeout_heap);
         reconfigure_timer_to_next_earliest_timeout();
     } else {
@@ -181,7 +199,7 @@ int timer_irq(
     reconfigure_timer_to_next_earliest_timeout();
     /* Acknowledge that the IRQ has been handled */
     seL4_IRQHandler_Ack(irq_handler);
-    return CLOCK_R_FAIL;
+    return CLOCK_R_OK;
 }
 
 int stop_timer(void)
