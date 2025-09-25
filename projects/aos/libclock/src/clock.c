@@ -148,6 +148,37 @@ int timer_irq(
 )
 {
     /* Handle the IRQ */
+    timestamp_t current_timestamp = get_time();
+    // pop from heap
+    struct sc_heap_data *current_timeout = sc_heap_peek(&clock.timeout_heap);
+    if (current_timeout == NULL) {
+        return CLOCK_R_FAIL;
+    }
+
+    struct timeout_data *current_timeout_data = current_timeout->data;
+    printf("current_timestamp: %lu\n", current_timestamp);
+    printf("most recent timeout timestamp: %lu\n", current_timeout_data->timeout_timestamp);
+    if (current_timeout_data->timeout_timestamp > current_timestamp) {
+        return CLOCK_R_FAIL;
+    }
+    // invoke registered callback for all expired timeouts
+    while ( (current_timeout = sc_heap_peek(&clock.timeout_heap)) && 
+            current_timeout != NULL) {
+        printf("current timeout key: %lu\n", current_timeout->key);
+        current_timeout_data = current_timeout->data;
+        if (current_timeout_data->timeout_timestamp > current_timestamp) break;
+        sc_heap_pop(&clock.timeout_heap);
+        printf("after pop!: \n");
+
+        // skip removed timeout
+        bool removed = false;
+        cset__contains(&clock.removed_ids, current_timeout_data->id, &removed);
+        if (removed) continue;
+
+        current_timeout_data->callback(current_timeout_data->id, current_timeout_data->data);
+    }
+
+    reconfigure_timer_to_next_earliest_timeout();
     /* Acknowledge that the IRQ has been handled */
     seL4_IRQHandler_Ack(irq_handler);
     return CLOCK_R_FAIL;
