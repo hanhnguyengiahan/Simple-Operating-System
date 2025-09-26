@@ -555,6 +555,21 @@ void *callback_example(uint32_t id, void *data)
 {
     printf("callback function triggered: %s\n", data);
 }
+
+void *callback_every_x_secs(uint32_t id, void *data)
+{
+    int x = *((int*)data);
+    printf("Periodic timer every %d secs, time = %lu\n", x, get_time());
+    register_timer(x * 1000000, callback_every_x_secs, data);
+}
+
+void *callback_every_x_millisecs(uint32_t id, void *data)
+{
+    int x = *((int*)data) * 1000;
+    printf("Periodic timer every %d microsecs, time = %lu\n", x, get_time());
+    register_timer(x, callback_every_x_millisecs, data);
+}
+
 NORETURN void *main_continued(UNUSED void *arg)
 {
     /* Initialise other system compenents here */
@@ -606,7 +621,6 @@ NORETURN void *main_continued(UNUSED void *arg)
     start_timer(timer_vaddr);
     /* You will need to register an IRQ handler for the timer here.
      * See "irq.h". */
-    char data[] = "hihi";
 
     seL4_Word irq_number = meson_timeout_irq(MESON_TIMER_A);
     bool edge_triggered = true;
@@ -616,12 +630,31 @@ NORETURN void *main_continued(UNUSED void *arg)
     ZF_LOGF_IF(init_irq_err != 0, "Failed to initialise IRQ");
     seL4_IRQHandler_Ack(irq_handler);
 
-    /* register timer */
-    uint32_t timer_id = register_timer(100000, callback_example, data);
-    // char data1[] = "hehe";
-    // register_timer(90000, callback_example, data1);
-    // char data2[] = "hoho";
-    // register_timer(50500, callback_example, data2);
+    /* Periodic timer tests */
+    // int convert_to_ms = 1000000;
+    // int timer_1_freq = 2;
+    // uint32_t timer_id = register_timer(timer_1_freq * convert_to_ms, callback_every_x_secs, &timer_1_freq);
+    
+    // int timer_2_freq = 1;
+    // uint32_t timer_id2 = register_timer(timer_2_freq * convert_to_ms, callback_every_x_secs, &timer_2_freq);
+    
+    // int timer_3_freq = 3;
+    // register_timer(timer_3_freq * convert_to_ms, callback_every_x_secs, &timer_3_freq);
+    
+    /* Oneshot timer tests*/
+    // char data1[] = "hi 1";
+    // uint32_t timer_id = register_timer(5000000, callback_example, data1);
+    
+    // char data2[] = "hi 2";
+    // uint32_t timer_id2 = register_timer(3000000, callback_example, data2);
+    
+    // char data3[] = "hi 3";
+    // register_timer(1500000, callback_example, data3);
+
+    // very fast timer
+    int timer_3_freq = 1;
+    register_timer(timer_3_freq * 100000, callback_every_x_millisecs, &timer_3_freq);
+
     /* Start the user application */
     printf("Start first process\n");
     bool success = start_first_process(APP_NAME, ipc_ep);
