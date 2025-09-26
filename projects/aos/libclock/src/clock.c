@@ -47,9 +47,11 @@ struct register_timer_data {
 
 int start_timer(unsigned char *timer_vaddr)
 {
-    int err = stop_timer();
-    if (err != 0) {
-        return err;
+    if (clock.driver_state == DRIVER_STARTED) { // stop driver if it already init
+        int err = stop_timer();
+        if (err != 0) {
+            return err;
+        }
     }
 
     clock.regs = (meson_timer_reg_t *)(timer_vaddr + TIMER_REG_START);
@@ -150,6 +152,10 @@ bool configure_timeout_data(
 
 uint32_t register_timer(uint64_t delay, timer_callback_t callback, void *data)
 {
+    if (clock.driver_state == DRIVER_STOPPED ||
+        clock.driver_state == DRIVER_HAS_NOT_INIT) {
+        return 0;
+    }
     // get the id for this timer
     uint32_t timer_id = clock.next_timer_id;
 
@@ -188,6 +194,13 @@ uint32_t register_timer(uint64_t delay, timer_callback_t callback, void *data)
 
 int remove_timer(uint32_t id)
 {
+    if (clock.driver_state == DRIVER_HAS_NOT_INIT) {
+        return CLOCK_R_UINT;
+    }
+    if (clock.driver_state == DRIVER_STOPPED) {
+        return CLOCK_R_CNCL;
+    }
+
     bool used = false;
     cset__contains(&clock.used_ids, id, &used);
     if (!used) {
@@ -220,6 +233,13 @@ int timer_irq(
     seL4_IRQHandler irq_handler
 )
 {
+    if (clock.driver_state == DRIVER_HAS_NOT_INIT) {
+        return CLOCK_R_UINT;
+    }
+    if (clock.driver_state == DRIVER_STOPPED) {
+        return CLOCK_R_CNCL;
+    }
+
     /* Handle the IRQ */
     timestamp_t current_timestamp = get_time();
     // pop from heap
@@ -259,6 +279,13 @@ int timer_irq(
 
 int stop_timer(void)
 {
+    if (clock.driver_state == DRIVER_HAS_NOT_INIT) {
+        return CLOCK_R_UINT;
+    }
+    if (clock.driver_state == DRIVER_STOPPED) {
+        return CLOCK_R_CNCL;
+    }
+
     /* Stop the timer from producing further interrupts and remove all
      * existing timeouts */
     clock.driver_state = DRIVER_STOPPED;
