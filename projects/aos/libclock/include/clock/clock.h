@@ -24,6 +24,13 @@
 #define CLOCK_R_CNCL (-2)       /* operation cancelled (driver stopped) */
 #define CLOCK_R_FAIL (-3)       /* operation failed for other reason */
 
+/**
+ * Driver status
+ */
+#define DRIVER_HAS_NOT_INIT 0
+#define DRIVER_STARTED 1
+#define DRIVER_STOPPED 2
+
 typedef uint64_t timestamp_t;
 typedef void (*timer_callback_t)(uint32_t id, void *data);
 

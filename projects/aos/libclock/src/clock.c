@@ -22,8 +22,8 @@ Cset(uint32_t) cset;
 
 static struct {
     volatile meson_timer_reg_t *regs;
-    volatile bool has_started;
     /* Add fields as you see necessary */
+    int driver_state;
     struct sc_heap timeout_heap;
     cset removed_ids;
     cset used_ids;
@@ -58,7 +58,7 @@ int start_timer(unsigned char *timer_vaddr)
     configure_timestamp(clock.regs, TIMESTAMP_TIMEBASE_1_US);
     
     // allow timers to be registered
-    clock.has_started = true;
+    clock.driver_state = DRIVER_STARTED;
 
     cset__init(&clock.removed_ids);
     cset__init(&clock.used_ids);
@@ -194,12 +194,15 @@ int remove_timer(uint32_t id)
         return CLOCK_R_FAIL;
     }
     struct timeout_data *timeout_data = next_earliest_timeout->data;
-    if (timeout_data->id == id) {
+    if (timeout_data->id == id) { // the removed id is the timeout at the top of the heap, then we can just pop it from the heap
         // disable the timeout timer
-        configure_timeout(clock.regs, MESON_TIMER_A, false, false, TIMEOUT_TIMEBASE_1_MS, 0);
-        sc_heap_pop(&clock.timeout_heap);
+        configure_timeout(clock.regs, MESON_TIMER_A, false, false, TIMEOUT_TIMEBASE_1_US, 0);
+        
+        void *data = sc_heap_pop(&clock.timeout_heap);
+        free(data);
+
         reconfigure_timer_to_next_earliest_timeout();
-    } else {
+    } else { // add it to a set so we can skip it later during timer_irq
         cset__add(&clock.removed_ids, id);
     }
 
@@ -221,23 +224,28 @@ int timer_irq(
         return CLOCK_R_FAIL;
     }
 
-    struct timeout_data *current_timeout_data = current_timeout->data;
-    if (current_timeout_data->timeout_timestamp > current_timestamp) {
+    struct timeout_data current_timeout_data = *((struct timeout_data*)(current_timeout->data));
+    if (current_timeout_data.timeout_timestamp > current_timestamp) { 
+        // the timeout at top of the heap is in the future, which makes no sense. Hence returns CLOCK_R_FAIL here. 
+        // However, this situation theoretically should not happen, but checked here just in case.
         return CLOCK_R_FAIL;
     }
+
     // invoke registered callback for all expired timeouts
     while ( (current_timeout = sc_heap_peek(&clock.timeout_heap)) && 
             current_timeout != NULL) {
-        current_timeout_data = current_timeout->data;
-        if (current_timeout_data->timeout_timestamp > current_timestamp) break;
-        sc_heap_pop(&clock.timeout_heap);
+        current_timeout_data = *((struct timeout_data*)(current_timeout->data));
+        if (current_timeout_data.timeout_timestamp > current_timestamp) break;
+        
+        void *data = sc_heap_pop(&clock.timeout_heap);
+        free(data);
 
         // skip removed timeout
         bool removed = false;
-        cset__contains(&clock.removed_ids, current_timeout_data->id, &removed);
+        cset__contains(&clock.removed_ids, current_timeout_data.id, &removed);
         if (removed) continue;
 
-        current_timeout_data->callback(current_timeout_data->id, current_timeout_data->data);
+        current_timeout_data.callback(current_timeout_data.id, current_timeout_data.data);
     }
 
     reconfigure_timer_to_next_earliest_timeout();
@@ -250,6 +258,18 @@ int stop_timer(void)
 {
     /* Stop the timer from producing further interrupts and remove all
      * existing timeouts */
-    // return CLOCK_R_FAIL;
+    clock.driver_state = DRIVER_STOPPED;
+
+    // disable timer
+    configure_timeout(clock.regs, MESON_TIMER_A, false, false, TIMEOUT_TIMEBASE_1_US, 0);
+    
+    // clear the heap. Frees every item in it
+    struct sc_heap_data *current_timeout;
+    while ((current_timeout = sc_heap_peek(&clock.timeout_heap)) &&
+            current_timeout != NULL) {
+        free(current_timeout->data);
+        free(current_timeout);
+    }
+
     return CLOCK_R_OK;
 }
