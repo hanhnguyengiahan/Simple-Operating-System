@@ -37,6 +37,13 @@ struct timeout_data {
     void* data;
 };
 
+struct register_timer_data {
+    uint64_t delay;
+    timer_callback_t callback;
+    void *data;
+};
+
+
 int start_timer(unsigned char *timer_vaddr)
 {
     int err = stop_timer();
@@ -90,6 +97,50 @@ bool reconfigure_timer_to_next_earliest_timeout() {
     return true;
 }
 
+void connecting_callback(uint32_t id, void *data) {
+    register_timer(
+        ((struct register_timer_data*)(data))->delay, 
+        ((struct register_timer_data*)(data))->callback, 
+        ((struct register_timer_data*)(data))->data
+    );
+}
+
+// Delay time may exceed UINT16_T (which is what the hardware is capable of), 
+// hence we breakdown the delay time in chunks of UINT16_T, connected by callbacks.
+// Returns true on successful breakdown of delay, false when out of memory.
+bool configure_timeout_data(
+    struct timeout_data *timeout_data, 
+    uint64_t delay, 
+    timer_callback_t callback, 
+    void *callback_data,
+    uint32_t timer_id) 
+{
+    timeout_data->id = timer_id;
+    if (delay > (uint64_t) UINT16_MAX) {
+        timeout_data->callback = connecting_callback;
+        timeout_data->timeout_timestamp = get_time() + (uint64_t) UINT16_MAX;
+        
+        // construct callback data for connecting_callback()
+        struct register_timer_data *register_timer_data = malloc(sizeof(struct register_timer_data));
+        if (register_timer_data == NULL) {
+            return false;
+        }
+
+        *register_timer_data = (struct register_timer_data) {
+            .delay = delay - (uint64_t) UINT16_MAX,
+            .callback = callback,
+            .data = callback_data
+        };
+
+        timeout_data->data = register_timer_data;
+    } else {
+        timeout_data->callback = callback;
+        timeout_data->data = callback_data;
+        timeout_data->timeout_timestamp = get_time() + delay;
+    }
+    return true;
+}
+
 uint32_t register_timer(uint64_t delay, timer_callback_t callback, void *data)
 {
     // get the id for this timer
@@ -108,12 +159,10 @@ uint32_t register_timer(uint64_t delay, timer_callback_t callback, void *data)
         return 0;
     }
 
-    timeout_data->callback = callback;
-    timeout_data->id = timer_id;
-    timeout_data->data = data;
-    timeout_data->timeout_timestamp = get_time() + delay;
+    bool ret = configure_timeout_data(timeout_data, delay, callback, data, timer_id);
+    if (!ret) return 0;
 
-    bool ret = sc_heap_add(&clock.timeout_heap, timeout_data->timeout_timestamp, timeout_data);
+    ret = sc_heap_add(&clock.timeout_heap, timeout_data->timeout_timestamp, timeout_data);
     if (!ret) {
         return 0;
     }
