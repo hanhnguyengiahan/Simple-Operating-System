@@ -89,7 +89,8 @@ bool reconfigure_timer_to_next_earliest_timeout() {
             continue;
         }
         printf("Reconfigure to delay for %lu \n", next_earliest_timeout_data->delay);
-        configure_timeout(clock.regs, MESON_TIMER_A, true, false, TIMEOUT_TIMEBASE_1_US, next_earliest_timeout_data->delay);
+        uint16_t num_ticks = get_time() - next_earliest_timeout_data->timeout_timestamp;
+        configure_timeout(clock.regs, MESON_TIMER_A, true, false, TIMEOUT_TIMEBASE_1_US, num_ticks);
         break;
     }
 
@@ -175,8 +176,6 @@ uint32_t register_timer(uint64_t delay, timer_callback_t callback, void *data)
     if (!ret) {
         return 0;
     }
-
-    current_timeout = sc_heap_peek(&clock.timeout_heap);
 
     cset__add(&clock.used_ids, timer_id);
     return timer_id;
