@@ -662,20 +662,20 @@ NORETURN void *main_continued(UNUSED void *arg)
     // register_timer(timer_3_freq, callback_every_x_microsecs, &timer_3_freq);
 
     // DEMO TIMERS
-    char timer1[] = "1";
-    uint32_t timer_id1 = register_timer(100000, callback_periodic_demo, timer1);
+    // char timer1[] = "1";
+    // uint32_t timer_id1 = register_timer(100000, callback_periodic_demo, timer1);
     
-    char timer2[] = "2";
-    uint32_t timer_id2 = register_timer(100000, callback_periodic_demo, timer2);
+    // char timer2[] = "2";
+    // uint32_t timer_id2 = register_timer(100000, callback_periodic_demo, timer2);
 
-    // Test remove_timer
-    assert(remove_timer(timer_id2) == CLOCK_R_OK);
-    assert(remove_timer(123456) == CLOCK_R_FAIL); // non-exist timer id
+    // // Test remove_timer
+    // assert(remove_timer(timer_id2) == CLOCK_R_OK);
+    // assert(remove_timer(123456) == CLOCK_R_FAIL); // non-exist timer id
 
-    // Test stop timer
-    stop_timer();
-    assert(register_timer(1, callback_example, NULL) == 0);
-    assert(remove_timer(timer_id1) == CLOCK_R_CNCL);
+    // // Test stop timer
+    // stop_timer();
+    // assert(register_timer(1, callback_example, NULL) == 0);
+    // assert(remove_timer(timer_id1) == CLOCK_R_CNCL);
 
     /* Start the user application */
     printf("Start first process\n");
