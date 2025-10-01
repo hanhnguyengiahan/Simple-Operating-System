@@ -39,6 +39,7 @@ typedef int fmode_t;
 #define ST_SPECIAL 2    /* special (console) file */
 typedef int st_type_t;
 
+#define CONSOLE_FD 3    /* File descriptor 0,1,2 is already reserved for stdin, stdout and stderr */
 
 typedef struct {
     st_type_t st_type;    /* file type */

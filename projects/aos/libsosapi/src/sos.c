@@ -14,8 +14,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sos.h>
-
+#include <stdbool.h>
 #include <sel4/sel4.h>
+#include <fcntl.h>
+
+static bool is_console_opened = false;
+static fmode_t console_mode;
 
 static size_t sos_debug_print(const void *vData, size_t count)
 {
@@ -29,9 +33,38 @@ static size_t sos_debug_print(const void *vData, size_t count)
     return count;
 }
 
+// currently does not check for PROCESS_MAX_FILES opened
 int sos_open(const char *path, fmode_t mode)
 {
-    assert(!"You need to implement this");
+    switch (mode)
+    {
+        case O_RDONLY:
+            mode = FM_READ;
+            break;
+        case O_WRONLY:
+            mode = FM_WRITE;
+            break;
+        case O_RDWR:
+            mode = FM_WRITE | FM_READ;
+        default:
+            return -1;
+            break;
+    }   
+
+    if (strcmp(path, "console") == 0) {
+        if (is_console_opened) {
+            if (((console_mode  >> FM_READ) & 1) && 
+                ((mode          >> FM_READ) & 1)) {
+                return -1; // Only one reader at a time!
+            }
+        } 
+
+        is_console_opened = true;
+        console_mode |= mode;
+
+        return CONSOLE_FD;
+    }
+
     return -1;
 }
 
