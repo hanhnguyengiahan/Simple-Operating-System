@@ -204,22 +204,22 @@ NORETURN void syscall_loop(seL4_CPtr ep)
              * object! */
             sos_handle_irq_notification(&badge, &have_reply);
         } else if (label == seL4_Fault_NullFault) {
-
             /* It's not a fault or an interrupt, it must be an IPC
              * message from console_test! */
             // reply_msg = handle_syscall(badge, seL4_MessageInfo_get_length(message) - 1, &have_reply);
-            // spawn a thread
-            char buf[10];
 
-            printf("BEFORE CREATE A THREAD\n");
             /* Create an notification object */
             seL4_CPtr ntfn;
             ut_t *ut = alloc_retype(&ntfn, seL4_NotificationObject, seL4_NotificationBits);
             ZF_LOGF_IF(!ut, "No memory for notification object");
+
+            /* Create arguments for the handle_syscall function */
             struct handle_syscall_args *arg = malloc(sizeof(struct handle_syscall_args));
             arg->badge = badge;
             arg->have_reply = &have_reply;
             arg->num_args = seL4_MessageInfo_get_length(message) - 1;
+
+            /* Spawn a thread to handle syscall */
             sos_thread_t* thread = thread_create(handle_syscall, arg, badge, true, seL4_MinPrio, ntfn, false);
         } else {
             /* some kind of fault */
