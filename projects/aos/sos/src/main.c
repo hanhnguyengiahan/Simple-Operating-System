@@ -60,7 +60,7 @@
 #define IRQ_EP_BADGE         BIT(seL4_BadgeBits - 1ul)
 #define IRQ_IDENT_BADGE_BITS MASK(seL4_BadgeBits - 1ul)
 
-#define APP_NAME             "console_test"
+#define APP_NAME             "sosh"
 #define APP_PRIORITY         (0)
 #define APP_EP_BADGE         (101)
 
@@ -129,6 +129,10 @@ static struct {
     sos_thread_t* thread;
 } user_process;
 
+struct network_console *network_console;
+
+struct network_console *network_console;
+
 struct handle_syscall_args {
     seL4_Word badge;
     int num_args;
@@ -156,6 +160,17 @@ seL4_MessageInfo_t handle_syscall(struct handle_syscall_args *arg)
         /* construct a reply message of length 1 */
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
         /* Set the first (and only) word in the message to 0 */
+        seL4_SetMR(0, 0);
+
+        break;
+    case 2:
+        ZF_LOGV("syscall: write!\n");
+        seL4_Word chr = seL4_GetMR(1);
+        char byte_to_send[1] = {chr}; 
+
+        network_console_send(network_console, byte_to_send, 1); 
+        
+        reply_msg = seL4_MessageInfo_new(0, 0, 0, 1); // sends a random byte back, just to 
         seL4_SetMR(0, 0);
         break;
     default:
@@ -656,6 +671,7 @@ NORETURN void *main_continued(UNUSED void *arg)
     /* Initialise the network hardware. */
     printf("Network init\n");
     network_init(&cspace, timer_vaddr, ntfn);
+    network_console = network_console_init();
 
 #ifdef CONFIG_SOS_GDB_ENABLED
     /* Initialize the debugger */
@@ -704,20 +720,20 @@ NORETURN void *main_continued(UNUSED void *arg)
     // register_timer(timer_3_freq, callback_every_x_microsecs, &timer_3_freq);
 
     // DEMO TIMERS
-    char timer1[] = "1";
-    uint32_t timer_id1 = register_timer(100000, callback_periodic_demo, timer1);
+    // char timer1[] = "1";
+    // uint32_t timer_id1 = register_timer(100000, callback_periodic_demo, timer1);
     
-    char timer2[] = "2";
-    uint32_t timer_id2 = register_timer(100000, callback_periodic_demo, timer2);
+    // char timer2[] = "2";
+    // uint32_t timer_id2 = register_timer(100000, callback_periodic_demo, timer2);
 
-    // Test remove_timer
-    assert(remove_timer(timer_id2) == CLOCK_R_OK);
-    assert(remove_timer(123456) == CLOCK_R_FAIL); // non-exist timer id
+    // // Test remove_timer
+    // assert(remove_timer(timer_id2) == CLOCK_R_OK);
+    // assert(remove_timer(123456) == CLOCK_R_FAIL); // non-exist timer id
 
-    // Test stop timer
-    stop_timer();
-    assert(register_timer(1, callback_example, NULL) == 0);
-    assert(remove_timer(timer_id1) == CLOCK_R_CNCL);
+    // // Test stop timer
+    // stop_timer();
+    // assert(register_timer(1, callback_example, NULL) == 0);
+    // assert(remove_timer(timer_id1) == CLOCK_R_CNCL);
 
     /* Start the user application */
     printf("Start first process\n");

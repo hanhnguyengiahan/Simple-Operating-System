@@ -14,8 +14,12 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sos.h>
-
+#include <stdbool.h>
 #include <sel4/sel4.h>
+#include <fcntl.h>
+
+static bool is_console_opened = false;
+static fmode_t console_mode = 0;
 
 static size_t sos_debug_print(const void *vData, size_t count)
 {
@@ -29,9 +33,38 @@ static size_t sos_debug_print(const void *vData, size_t count)
     return count;
 }
 
+// currently does not check for PROCESS_MAX_FILES opened
 int sos_open(const char *path, fmode_t mode)
 {
-    assert(!"You need to implement this");
+    switch (mode)
+    {
+        case O_RDONLY:
+            mode = FM_READ;
+            break;
+        case O_WRONLY:
+            mode = FM_WRITE;
+            break;
+        case O_RDWR:
+            mode = FM_WRITE | FM_READ;
+            break;
+        default:
+            return -1;
+            break;
+    }   
+
+    if (strcmp(path, "console") == 0) {
+        if (is_console_opened) {
+            if (HAS_FM_READ(console_mode) && HAS_FM_READ(mode)) {
+                return -1; // Only one reader at a time!
+            }
+        } 
+
+        is_console_opened = true;
+        console_mode |= mode;
+
+        return CONSOLE_FD;
+    }
+
     return -1;
 }
 
@@ -49,11 +82,19 @@ int sos_read(int file, char *buf, size_t nbyte)
 
 int sos_write(int file, const char *buf, size_t nbyte)
 {
-    /* MILESTONE 0: implement this to use your syscall and
-     * writes to the network console!
-     * Writing to files will come in later milestones.
-     */
-    return sos_debug_print(buf, nbyte);
+    if (file != CONSOLE_FD) return -1;
+    if (!is_console_opened || !HAS_FM_WRITE(console_mode)) return -1;
+    // sending data to SOS byte-by-byte via IPC
+    for (size_t i = 0; i < nbyte; ++i) {
+        seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 2);
+        seL4_SetMR(0, SYSCALL_SOS_WRITE); 
+        seL4_SetMR(1, buf[i]);
+        seL4_SetMR(2, is_console_opened); // let SOS knows we wants to write to console or not
+
+        seL4_Call(SOS_IPC_EP_CAP, tag);
+    }
+    return nbyte;
+
 }
 
 int sos_getdirent(int pos, char *name, size_t nbyte)

@@ -34,11 +34,21 @@
 #define FM_READ  4
 typedef int fmode_t;
 
+/* file mode checks */
+#define HAS_FM_READ(x)      ((x >> 2) & 1)
+#define HAS_FM_WRITE(x)     ((x >> 1) & 1)
+#define HAS_FM_EXEC(x)      (x & 1)
+
 /* stat file types */
 #define ST_FILE    1    /* plain file */
 #define ST_SPECIAL 2    /* special (console) file */
 typedef int st_type_t;
 
+#define CONSOLE_FD 3    /* File descriptors 0,1,2 are already reserved for stdin, stdout and stderr */
+
+/* syscall numbers */
+#define SYSCALL_SOS_READ    1
+#define SYSCALL_SOS_WRITE   2
 
 typedef struct {
     st_type_t st_type;    /* file type */
