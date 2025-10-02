@@ -42,7 +42,6 @@
 #include "utils.h"
 #include "threads.h"
 #include <sos/gen_config.h>
-#include <sos.h>
 #ifdef CONFIG_SOS_GDB_ENABLED
 #include "debugger.h"
 #endif /* CONFIG_SOS_GDB_ENABLED */
@@ -61,7 +60,7 @@
 #define IRQ_EP_BADGE         BIT(seL4_BadgeBits - 1ul)
 #define IRQ_IDENT_BADGE_BITS MASK(seL4_BadgeBits - 1ul)
 
-#define APP_NAME             "console_test"
+#define APP_NAME             "sosh"
 #define APP_PRIORITY         (0)
 #define APP_EP_BADGE         (101)
 
@@ -134,7 +133,8 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
         seL4_SetMR(0, 0);
 
         break;
-    case SYSCALL_SOS_WRITE:
+    case 2:
+        ZF_LOGV("syscall: write!\n");
         seL4_Word chr = seL4_GetMR(1);
         char byte_to_send[1] = {chr}; 
 
@@ -142,7 +142,7 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
         
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 1); // sends a random byte back, just to 
         seL4_SetMR(0, 0);
-
+        break;
     default:
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
         ZF_LOGE("Unknown syscall %lu\n", syscall_number);
