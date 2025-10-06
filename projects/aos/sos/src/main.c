@@ -75,6 +75,8 @@
  */
 #define SOS_SYSCALL_READ 1
 #define SOS_SYSCALL_WRITE 2
+#define SOS_SYSCALL_TIMESTAMP 3
+#define SOS_SYSCALL_USLEEP 4
 
 /* Network console (nwcs) circular queue buffer, size = MAX_PAYLOAD_SIZE in networkconsole.c */
 #define DIM 1024
@@ -125,6 +127,9 @@ struct network_console *network_console;
 #define MAX_WORKER_THREADS  1
 static sos_thread_t* worker_threads[MAX_WORKER_THREADS];
 
+void wake_up_worker_thread() {
+    seL4_Signal(worker_thread->ntfn);
+}
 /**
  * Deals with a syscall and sets the message registers before returning the
  * message info to be passed through to seL4_ReplyRecv()
@@ -154,13 +159,23 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
             nwcs_reader = thread_index; // THREAD-SAFE because only allows 1 nwcs reader at a time
             seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
         }
-
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
         seL4_SetMR(0, SGLIB_QUEUE_FIRST_ELEMENT(char, nwcs_buf, i, j));
         SGLIB_QUEUE_DELETE_FIRST(char, nwcs_buf, i, j, DIM);
         nwcs_reader = -1;
         break;
-
+    case SOS_SYSCALL_TIMESTAMP:
+        ZF_LOGV("syscall get timestamp!\n");
+        reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
+        seL4_SetMR(0, get_time());
+        break;
+    case SOS_SYSCALL_USLEEP:
+        ZF_LOGV("syscall usleep!\n");
+        int msec = seL4_GetMR(1);
+        reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
+        register_timer(msec, wake_up_worker_thread, NULL);
+        seL4_Wait(worker_thread->ntfn, NULL);
+        break;
     default:
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
         ZF_LOGE("Unknown syscall %lu\n", syscall_number);
