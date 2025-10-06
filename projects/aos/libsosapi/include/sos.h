@@ -16,6 +16,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <sel4/sel4.h>
+#include <sossharedapi/syscalls.h>
 
 /* System calls for SOS */
 
@@ -45,12 +46,6 @@ typedef int fmode_t;
 typedef int st_type_t;
 
 #define CONSOLE_FD 3    /* File descriptors 0,1,2 are already reserved for stdin, stdout and stderr */
-
-/* syscall numbers */
-#define SYSCALL_SOS_READ    1
-#define SYSCALL_SOS_WRITE   2
-#define SYSCALL_SOS_TIMESTAMP 3
-#define SYSCALL_SOS_USLEEP  4
 
 typedef struct {
     st_type_t st_type;    /* file type */

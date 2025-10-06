@@ -24,6 +24,7 @@
                 "${workspaceFolder}/build/projects/libpicotcp/picotcp_external/picotcp/build/include",
                 "${workspaceFolder}/build/projects/libpicotcp/gen_config",
                 "${workspaceFolder}/projects/aos/libsosapi/include",
+                "${workspaceFolder}/projects/aos/libsossharedapi/include",
                 "${workspaceFolder}/projects/libutils/include",
                 "${workspaceFolder}/projects/libutils/arch_include/arm",
                 "${workspaceFolder}/build/projects/libutils/gen_config",

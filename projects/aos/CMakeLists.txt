@@ -29,6 +29,7 @@ add_subdirectory(libsel4cspace)
 add_subdirectory(libnetworkconsole)
 add_subdirectory(libsosapi)
 # add any additional libs here
+add_subdirectory(libsossharedapi)
 
 # enable our networking libs
 set(LibPicotcp ON CACHE BOOL "" FORCE)
