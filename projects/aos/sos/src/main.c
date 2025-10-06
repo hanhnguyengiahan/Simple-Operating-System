@@ -123,6 +123,9 @@ struct network_console *network_console;
 static sos_thread_t *worker_thread;
 static seL4_CPtr worker_ep;
 
+#define MAX_WORKER_THREADS  16
+static sos_thread_t* worker_threads[MAX_WORKER_THREADS];
+
 /**
  * Deals with a syscall and sets the message registers before returning the
  * message info to be passed through to seL4_ReplyRecv()
@@ -721,30 +724,30 @@ NORETURN void *main_continued(UNUSED void *arg)
     */
     
     /* Create a notification object */
-    ut_t *ut;
-    seL4_CPtr thread_ntfn;
-    ut = alloc_retype(&thread_ntfn, seL4_NotificationObject, seL4_NotificationBits);
-    ZF_LOGF_IF(!ut, "No memory for notification object");
-    
-    /* Create an endpoint object */
-    seL4_CPtr thread_ep;
-    ut = alloc_retype(&thread_ep, seL4_EndpointObject, seL4_EndpointBits);
-    ZF_LOGF_IF(!ut, "No memory for endpoint");
-    worker_ep = thread_ep;
-    
+    for (size_t i = 1; i <= MAX_WORKER_THREADS; ++i) {
+        ut_t *ut;
+        seL4_CPtr thread_ntfn;
+        ut = alloc_retype(&thread_ntfn, seL4_NotificationObject, seL4_NotificationBits);
+        ZF_LOGF_IF(!ut, "No memory for notification object");
+        
+        /* Start the worker thread */
+        struct syscall_loop_args *worker_sys_loop_args = malloc(sizeof(struct syscall_loop_args));
+        sos_thread_t* thread = thread_create(syscall_loop, worker_sys_loop_args, 0, false, seL4_MinPrio, thread_ntfn, false);
+        
+        // worker thread IPC EP is created within 
+        worker_sys_loop_args->ep = thread->ipc_ep;
+        thread_resume(thread);
+
+        worker_threads[i] = thread;
+    }
+
     /* Start user process */
     printf("Start first process\n");
-    bool success = start_first_process(APP_NAME, worker_ep);
+    bool success = start_first_process(APP_NAME, worker_threads[0]->ipc_ep);
     ZF_LOGF_IF(!success, "Failed to start first process");
     
-    /* Start the worker thread */
-    struct syscall_loop_args *worker_sys_loop_args = malloc(sizeof(struct syscall_loop_args));
-    worker_sys_loop_args->ep = worker_ep;
-    sos_thread_t* thread = thread_create(syscall_loop, worker_sys_loop_args, 0, true, seL4_MinPrio, thread_ntfn, false);
-    worker_thread = thread;
 
-    /* SOS entering syscall loop */
-    printf("\nSOS entering syscall loop\n");
+    /* Main thread needs to enter syscall loop as well, for handling interrupts */
     struct syscall_loop_args *main_sys_loop_args = malloc(sizeof(struct syscall_loop_args));
     main_sys_loop_args->ep = ipc_ep;
     syscall_loop(main_sys_loop_args);
