@@ -86,6 +86,7 @@ target_link_libraries(
     nfs
     ethernet
     sos_Config
+    sossharedapi
 )
 
 if(SosGDBSupport)

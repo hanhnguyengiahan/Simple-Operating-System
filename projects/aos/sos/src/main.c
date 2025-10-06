@@ -43,6 +43,7 @@
 #include "threads.h"
 #include <sos/gen_config.h>
 #include <utils/sglib.h>
+#include <sossharedapi/syscalls.h>
 #ifdef CONFIG_SOS_GDB_ENABLED
 #include "debugger.h"
 #endif /* CONFIG_SOS_GDB_ENABLED */
@@ -69,14 +70,6 @@
  * process */
 #define INITIAL_PROCESS_EXTRA_STACK_PAGES 4
 
-/*
- * Syscall number
- * TODO: create a shared header file between sos and sosapi to share the same syscall number
- */
-#define SOS_SYSCALL_READ 1
-#define SOS_SYSCALL_WRITE 2
-#define SOS_SYSCALL_TIMESTAMP 3
-#define SOS_SYSCALL_USLEEP 4
 
 /* Network console (nwcs) circular queue buffer, size = MAX_PAYLOAD_SIZE in networkconsole.c */
 #define DIM 1024
@@ -149,13 +142,13 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
 
     /* Process system call */
     switch (syscall_number) {
-    case SOS_SYSCALL_WRITE:
+    case SYSCALL_SOS_WRITE:
         ZF_LOGV("syscall write!\n");
         char byte_to_send[1] = { seL4_GetMR(1) };
         network_console_send(network_console, byte_to_send, 1); 
         break;
 
-    case SOS_SYSCALL_READ:
+    case SYSCALL_SOS_READ:
         ZF_LOGV("syscall read!\n");
         if (SGLIB_QUEUE_IS_EMPTY(char, nwcs_buf, i, j)) {
             nwcs_reader = thread_index; // THREAD-SAFE because only allows 1 nwcs reader at a time
@@ -166,12 +159,12 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
         SGLIB_QUEUE_DELETE_FIRST(char, nwcs_buf, i, j, DIM);
         nwcs_reader = -1;
         break;
-    case SOS_SYSCALL_TIMESTAMP:
+    case SYSCALL_SOS_TIMESTAMP:
         ZF_LOGV("syscall get timestamp!\n");
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
         seL4_SetMR(0, get_time());
         break;
-    case SOS_SYSCALL_USLEEP:
+    case SYSCALL_SOS_USLEEP:
         ZF_LOGV("syscall usleep!\n");
         int msec = seL4_GetMR(1);
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
