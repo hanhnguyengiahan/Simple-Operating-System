@@ -721,52 +721,9 @@ NORETURN void *main_continued(UNUSED void *arg)
     ZF_LOGF_IF(init_irq_err != 0, "Failed to initialise IRQ");
     seL4_IRQHandler_Ack(irq_handler);
 
-    /* Periodic timer tests */
-    // int convert_to_ms = 1000000;
-    // int timer_1_freq = 2;
-    // uint32_t timer_id = register_timer(timer_1_freq * convert_to_ms, callback_every_x_secs, &timer_1_freq);
-    
-    // int timer_2_freq = 1;
-    // uint32_t timer_id2 = register_timer(timer_2_freq * convert_to_ms, callback_every_x_secs, &timer_2_freq);
-    
-    // int timer_3_freq = 3;
-    // register_timer(timer_3_freq * convert_to_ms, callback_every_x_secs, &timer_3_freq);
-    
-    /* Oneshot timer tests*/
-    // char data1[] = "hi 1";
-    // uint32_t timer_id = register_timer(5000000, callback_example, data1);
-    
-    // char data2[] = "hi 2";
-    // uint32_t timer_id2 = register_timer(3000000, callback_example, data2);
-    
-    // char data3[] = "hi 3";
-    // register_timer(1500000, callback_example, data3);
-
-    // very fast timer
-    // int timer_3_freq = 100000;
-    // register_timer(timer_3_freq, callback_every_x_microsecs, &timer_3_freq);
-
-    // DEMO TIMERS
-    // char timer1[] = "1";
-    // uint32_t timer_id1 = register_timer(100000, callback_periodic_demo, timer1);
-    
-    // char timer2[] = "2";
-    // uint32_t timer_id2 = register_timer(100000, callback_periodic_demo, timer2);
-
-    // // Test remove_timer
-    // assert(remove_timer(timer_id2) == CLOCK_R_OK);
-    // assert(remove_timer(123456) == CLOCK_R_FAIL); // non-exist timer id
-
-    // // Test stop timer
-    // stop_timer();
-    // assert(register_timer(1, callback_example, NULL) == 0);
-    // assert(remove_timer(timer_id1) == CLOCK_R_CNCL);
-
-    /*  Create a thread pool. TODO: create 16 worker threads
-    */
-    
-    /* Create a notification object */
+    /*  Create a thread pool */
     for (size_t i = 0; i < MAX_WORKER_THREADS; ++i) {
+        /* Create a notification object */
         ut_t *ut;
         seL4_CPtr thread_ntfn;
         ut = alloc_retype(&thread_ntfn, seL4_NotificationObject, seL4_NotificationBits);
