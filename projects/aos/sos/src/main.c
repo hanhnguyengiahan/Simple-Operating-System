@@ -417,7 +417,7 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
         }
     }
     /* Create a stack region */
-    err = add_region(user_process.regions, stack_top, stack_bottom - stack_top, seL4_CapRights_new(false, false, true, true), true);
+    err = add_region(user_process.regions, stack_top, stack_bottom - stack_top, seL4_ReadWrite, true);
     if (err) {
         ZF_LOGE("Unable to add stack region");
         return 0;
@@ -568,6 +568,13 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
                     seL4_AllRights, seL4_ARM_Default_VMAttributes, user_process.paging_objects, user_process.frame_refs);
     if (err != 0) {
         ZF_LOGE("Unable to map IPC buffer for user app");
+        return false;
+    }
+
+    /* Keep track of IPC buffer region */
+    add_region(user_process.regions, PROCESS_IPC_BUFFER, PAGE_SIZE_4K, seL4_ReadWrite, false);
+    if (err) {
+        ZF_LOGE("Unable to add stack region");
         return false;
     }
 
