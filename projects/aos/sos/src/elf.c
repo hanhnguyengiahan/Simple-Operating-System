@@ -154,7 +154,7 @@ static int load_segment_into_vspace(cspace_t *cspace, seL4_CPtr loadee, const ch
     return 0;
 }
 
-int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file, list_t *paging_objects, list_t *frame_refs, list_t *regions)
+int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file, user_process_t *user_process)
 {
     uintptr_t heap_vaddr_base;
     int num_headers = elf_getNumProgramHeaders(elf_file);
@@ -177,7 +177,7 @@ int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file, list_t 
         }
 
         /* Create a region for this segment */
-        if (add_region(regions, vaddr, segment_size, get_sel4_rights_from_elf(flags), false)) {
+        if (add_vm_region(user_process->vm_regions, vaddr, segment_size, get_sel4_rights_from_elf(flags), false) == NULL) {
             ZF_LOGE("Unable to create a region");
             return -1;
         }
@@ -185,7 +185,7 @@ int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file, list_t 
         /* Copy it across into the vspace. */
         ZF_LOGE(" * Loading segment %p-->%p\n", (void *) vaddr, (void *)(vaddr + segment_size));
         int err = load_segment_into_vspace(cspace, loadee_vspace, source_addr, segment_size, file_size, vaddr,
-                                           get_sel4_rights_from_elf(flags), paging_objects, frame_refs);
+                                           get_sel4_rights_from_elf(flags), user_process->paging_objects, user_process->frame_refs);
         if (err) {
             ZF_LOGE("Elf loading failed!");
             return -1;
@@ -194,7 +194,8 @@ int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file, list_t 
     
     
     /* Create a heap region */
-    if (add_region(regions, heap_vaddr_base, 0, seL4_CapRights_new(false, false, true, true), false)) {
+    user_process->heap_region = add_vm_region(user_process->vm_regions, heap_vaddr_base, 0, seL4_ReadWrite, false);
+    if (user_process->heap_region == NULL) {
         ZF_LOGE("Unable to create a heap region");
         return -1;
     }
