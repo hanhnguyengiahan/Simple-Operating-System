@@ -45,13 +45,13 @@
 #include <utils/sglib.h>
 #include <utils/list.h>
 #include <sossharedapi/syscalls.h>
+#include "user_process.h"
 // #include "syscall_handlers/syscall_handlers.h"
 #ifdef CONFIG_SOS_GDB_ENABLED
 #include "debugger.h"
 #endif /* CONFIG_SOS_GDB_ENABLED */
 
 #include <aos/vsyscall.h>
-
 /*
  * To differentiate between signals from notification objects and and IPC messages,
  * we assign a badge to the notification object. The badge that we receive will
@@ -94,27 +94,7 @@ static seL4_CPtr sched_ctrl_start;
 static seL4_CPtr sched_ctrl_end;
 
 /* the one process we start */
-static struct {
-    ut_t *tcb_ut;
-    seL4_CPtr tcb;
-    ut_t *vspace_ut;
-    seL4_CPtr vspace;
-
-    ut_t *ipc_buffer_ut;
-    seL4_CPtr ipc_buffer;
-
-    ut_t *sched_context_ut;
-    seL4_CPtr sched_context;
-
-    cspace_t cspace;
-
-    ut_t *stack_ut;
-    seL4_CPtr stack;
-
-    list_t *paging_objects;
-    list_t *frame_refs;
-    list_t *regions;
-} user_process;
+static user_process_t user_process;
 
 struct syscall_loop_args {
     seL4_CPtr ep;
@@ -417,12 +397,11 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
         }
     }
     /* Create a stack region */
-    err = add_region(user_process.regions, stack_top, stack_bottom - stack_top, seL4_ReadWrite, true);
-    if (err) {
+    user_process.stack_region = add_vm_region(user_process.vm_regions, stack_top, stack_bottom - stack_top, seL4_ReadWrite, true);
+    if (user_process.stack_region == NULL) {
         ZF_LOGE("Unable to add stack region");
         return 0;
     }
-
     return stack_top;
 }
 
@@ -471,9 +450,9 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
     user_process.frame_refs = malloc(sizeof(list_t));
     list_init(user_process.frame_refs);
 
-    /* Initialise a linked list of regions */
-    user_process.regions = malloc(sizeof(list_t));
-    list_init(user_process.regions);
+    /* Initialise a linked list of vm_regions */
+    user_process.vm_regions = malloc(sizeof(list_t));
+    list_init(user_process.vm_regions);
 
     /* allocate a new slot in the target cspace which we will mint a badged endpoint cap into --
      * the badge is used to identify the process, which will come in handy when you have multiple
@@ -557,7 +536,7 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
     seL4_Word sp = init_process_stack(&cspace, seL4_CapInitThreadVSpace, &elf_file);
 
     /* load the elf image from the cpio file */
-    err = elf_load(&cspace, user_process.vspace, &elf_file, user_process.paging_objects, user_process.frame_refs, user_process.regions);
+    err = elf_load(&cspace, user_process.vspace, &elf_file, &user_process);
     if (err) {
         ZF_LOGE("Failed to load elf image");
         return false;
@@ -572,9 +551,9 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
     }
 
     /* Keep track of IPC buffer region */
-    add_region(user_process.regions, PROCESS_IPC_BUFFER, PAGE_SIZE_4K, seL4_ReadWrite, false);
-    if (err) {
-        ZF_LOGE("Unable to add stack region");
+    vm_region_t *ipc_region = add_vm_region(user_process.vm_regions, PROCESS_IPC_BUFFER, PAGE_SIZE_4K, seL4_ReadWrite, false);
+    if (ipc_region == NULL) {
+        ZF_LOGE("Unable to add ipc region");
         return false;
     }
 

@@ -213,18 +213,18 @@ seL4_Error sos_map_frame(cspace_t *cspace, frame_ref_t frame_ref, seL4_CPtr fram
     return err;
 }
 
-int add_region(list_t *regions, uintptr_t vaddr_base, size_t size, seL4_CapRights_t permission, bool grows_downward) {
-    struct region_object *region_object = malloc(sizeof(struct region_object));
-    if (region_object == NULL) {
+vm_region_t *add_vm_region(list_t *vm_regions, uintptr_t vaddr_base, size_t size, seL4_CapRights_t permission, bool grows_downward) {
+    vm_region_t *region = malloc(sizeof(vm_region_t));
+    if (region == NULL) {
         // allocation failed
-        return -1;
+        return NULL;
     }
-    region_object->vaddr_base = vaddr_base;
-    region_object->size = size;
-    region_object->permission = permission;
-    region_object->grows_downward = grows_downward;
-    list_append(regions, region_object);
-    return 0;
+    region->vaddr_base = vaddr_base;
+    region->size = size;
+    region->permission = permission;
+    region->grows_downward = grows_downward;
+    list_append(vm_regions, region);
+    return region;
 }
 
 static uintptr_t device_virt = SOS_DEVICE_START;
