@@ -17,6 +17,7 @@
 #include "ut.h"
 #include "frame_table.h"
 
+/* TODO: move these data structures to a file called bookkeeping for better clarity. */
 struct paging_object
 {
     ut_t *ut;
@@ -28,6 +29,14 @@ struct frame_ref_object
     frame_ref_t frame_ref;
 };
 
+struct region_object {
+    uintptr_t vaddr_base;
+    size_t size;
+    seL4_CapRights_t permission;
+    bool grows_downward;
+};
+
+int add_region(list_t *regions, uintptr_t vaddr_base, size_t size, seL4_CapRights_t permission, bool grows_downward);
 /**
  * Maps a page.
  *

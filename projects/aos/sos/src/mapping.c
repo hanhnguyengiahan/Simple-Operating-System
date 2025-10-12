@@ -212,6 +212,21 @@ seL4_Error sos_map_frame(cspace_t *cspace, frame_ref_t frame_ref, seL4_CPtr fram
     }
     return err;
 }
+
+int add_region(list_t *regions, uintptr_t vaddr_base, size_t size, seL4_CapRights_t permission, bool grows_downward) {
+    struct region_object *region_object = malloc(sizeof(struct region_object));
+    if (region_object == NULL) {
+        // allocation failed
+        return -1;
+    }
+    region_object->vaddr_base = vaddr_base;
+    region_object->size = size;
+    region_object->permission = permission;
+    region_object->grows_downward = grows_downward;
+    list_append(regions, region_object);
+    return 0;
+}
+
 static uintptr_t device_virt = SOS_DEVICE_START;
 
 void *sos_map_device(cspace_t *cspace, uintptr_t addr, size_t size)
