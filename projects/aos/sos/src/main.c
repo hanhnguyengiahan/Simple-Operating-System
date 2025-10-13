@@ -151,6 +151,134 @@ void handler_sos_usleep(seL4_MessageInfo_t *reply_msg, int thread_index) {
     register_timer(msec, timeout_callback, &thread_index);
     seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
 }
+
+void handler_sos_brk(seL4_MessageInfo_t *reply_msg, int thread_index) {
+    ZF_LOGV("syscall: brk!\n");
+    *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
+
+    uintptr_t new_brk = seL4_GetMR(1);
+    if (new_brk == 0) {
+        seL4_SetMR(0, user_process.heap_region->vaddr_base);
+        return;
+    }
+
+    /* check if the new_brk is valid: 
+        - within the heap & stack bottom
+    */
+    
+    uintptr_t stack_bottom = user_process.stack_region->vaddr_base - user_process.stack_region->size;
+    uintptr_t heap_base = user_process.heap_region->vaddr_base;
+    uintptr_t curr_brk = heap_base + user_process.heap_region->size;
+
+    if (new_brk < heap_base || new_brk >= stack_bottom) {
+        ZF_LOGE("New program break is not valid");
+        seL4_SetMR(0, 0);
+        return;
+    }
+
+    if (curr_brk == new_brk) {
+        seL4_SetMR(0, new_brk);
+        return;
+    } else if (curr_brk < new_brk) { /* allocate more memory */
+        uintptr_t next_page_vaddr_to_alloc = ROUND_UP(curr_brk, PAGE_SIZE_4K);
+    
+        while (next_page_vaddr_to_alloc < new_brk) {
+            frame_ref_t frame = alloc_frame();
+            if (frame == NULL_FRAME) {
+                ZF_LOGE("Couldn't allocate additional stack frame");
+                seL4_SetMR(0, 0);
+                return;
+            }
+
+            /* allocate a slot to duplicate the stack frame cap so we can map it into the application */
+            seL4_CPtr frame_cptr = cspace_alloc_slot(&cspace);
+            if (frame_cptr == seL4_CapNull) {
+                free_frame(frame);
+                ZF_LOGE("Failed to alloc slot for stack extra stack frame");
+                seL4_SetMR(0, 0);
+                return;
+            }
+
+            /* copy the stack frame cap into the slot */
+            seL4_Error err = cspace_copy(&cspace, frame_cptr, &cspace, frame_page(frame), seL4_AllRights);
+            if (err != seL4_NoError) {
+                cspace_free_slot(&cspace, frame_cptr);
+                free_frame(frame);
+                ZF_LOGE("Failed to copy cap");
+                seL4_SetMR(0, 0);
+                return;
+            }
+
+            err = sos_map_frame(&cspace, frame, frame_cptr, user_process.vspace, next_page_vaddr_to_alloc,
+                            seL4_AllRights, seL4_ARM_Default_VMAttributes, user_process.paging_objects, user_process.frame_refs);
+            if (err != 0) {
+                cspace_delete(&cspace, frame_cptr);
+                cspace_free_slot(&cspace, frame_cptr);
+                free_frame(frame);
+                ZF_LOGE("Unable to map extra stack frame for user app");
+                seL4_SetMR(0, 0);
+                return;
+            }
+            next_page_vaddr_to_alloc += PAGE_SIZE_4K;
+        }
+    } else { /* deallocate frames */
+        uintptr_t next_page_vaddr_to_dealloc = ROUND_DOWN(curr_brk, PAGE_SIZE_4K);
+        
+        while (next_page_vaddr_to_dealloc >= new_brk) {
+            bool found_page = false;
+            for (   struct list_node *prev = NULL, *cur = user_process.frame_refs->head; 
+                    cur != NULL; 
+                    prev = cur, 
+                    cur = cur->next) 
+            {
+                frame_metadata_t *frame = (frame_metadata_t *)cur->data;
+                if (frame->vaddr == next_page_vaddr_to_dealloc) {
+                    found_page = true;
+
+                    if (prev == NULL) {
+                        /* Removing the list head. */
+                        user_process.frame_refs->head = cur->next;
+                    } else {
+                        prev->next = cur->next;
+                    }
+
+                    seL4_Error err = seL4_ARM_Page_Unmap(frame->frame_cap);
+                    if (err != seL4_NoError) {
+                        ZF_LOGE("Unable to unmap the page when deallocating the frames");
+                        seL4_SetMR(0, 0);
+                        return;
+                    }
+
+                    err = cspace_delete(&cspace, frame->frame_cap);
+                    if (err != seL4_NoError) {
+                        ZF_LOGE("Unable to delete the copy of the frame cap");
+                        seL4_SetMR(0, 0);
+                        return;
+                    }
+
+                    cspace_free_slot(&cspace, frame->frame_cap);
+
+                    free_frame(frame->frame_ref);
+
+                    free(cur);
+                    break;
+                }
+            }
+
+            if (!found_page) {
+                ZF_LOGE("Unable to find the mapped page at vaddr=%p", next_page_vaddr_to_dealloc);
+                seL4_SetMR(0, 0);
+                return;
+            }
+
+            next_page_vaddr_to_dealloc -= PAGE_SIZE_4K;
+        }
+    }
+
+    user_process.heap_region->size = new_brk - heap_base;
+    seL4_SetMR(0, new_brk);
+    return;
+}
 /**
  * Deals with a syscall and sets the message registers before returning the
  * message info to be passed through to seL4_ReplyRecv()
@@ -180,6 +308,9 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
         break;
     case SYSCALL_SOS_USLEEP:
         handler_sos_usleep(&reply_msg, thread_index);   
+        break;
+    case SYSCALL_SOS_BRK:
+        handler_sos_brk(&reply_msg, thread_index);
         break;
     default:
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
