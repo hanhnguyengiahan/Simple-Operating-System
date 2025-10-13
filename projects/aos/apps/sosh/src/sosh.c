@@ -10,6 +10,20 @@
  * @TAG(DATA61_GPL)
  */
 /* Simple shell to run on SOS */
+#include <assert.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <inttypes.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <time.h>
+#include <sys/time.h>
+#include <utils/time.h>
+#include <syscalls.h>
+/* Your OS header file */
+#include <sos.h>
+
 #include <utils/page.h>
 
 #define NBLOCKS 9
@@ -64,19 +78,74 @@ int main(void)
     }
     while(1);
 }
-// #include <assert.h>
-// #include <string.h>
-// #include <stdio.h>
-// #include <stdlib.h>
-// #include <inttypes.h>
-// #include <unistd.h>
-// #include <fcntl.h>
-// #include <time.h>
-// #include <sys/time.h>
-// #include <utils/time.h>
-// #include <syscalls.h>
-// /* Your OS header file */
-// #include <sos.h>
+
+// #define SMALL_BUF_SZ 2
+// #define MEDIUM_BUF_SZ 256
+
+// char test_str[] = "Basic test string for read/write";
+// char small_buf[SMALL_BUF_SZ];
+
+// int test_buffers(int console_fd) {
+//     int result;
+//    /* test a small string from the code segment */
+//    result = sos_write(console_fd, test_str, strlen(test_str));
+//    assert(result == strlen(test_str));
+
+//     /* test reading to a small buffer */
+//     result = sos_read(console_fd, small_buf, SMALL_BUF_SZ);
+//     /* make sure you type in at least SMALL_BUF_SZ */
+//     assert(result == SMALL_BUF_SZ);
+
+//     /* test reading into a large on-stack buffer */
+//     char stack_buf[MEDIUM_BUF_SZ];
+//     /* for this test you'll need to paste a lot of data into
+//         the console, without newlines */
+
+//     result = sos_read(console_fd, &stack_buf, MEDIUM_BUF_SZ);
+//     assert(result == MEDIUM_BUF_SZ);
+
+//     result = sos_write(console_fd, &stack_buf, MEDIUM_BUF_SZ);
+//     assert(result == MEDIUM_BUF_SZ);
+
+//     /* try sleeping */
+//     for (int i = 0; i < 5; i++) {
+//         time_t prev_seconds = time(NULL);
+//         sleep(1);
+//         time_t next_seconds = time(NULL);
+//         assert(next_seconds > prev_seconds);
+//         printf("Tick\n");
+//     }
+// }
+
+// void test_2_pages_buffer(int console_fd) {
+//     int result;
+//     const int sz = 4100;
+//     // char twopgs_buf[sz + 1];
+//     // for (int i = 0; i < sz; ++i) {
+//     //     twopgs_buf[i] = '2';
+//     // }
+//     // twopgs_buf[sz] = '\0';
+//     // result = sos_write(console_fd, twopgs_buf, strlen(twopgs_buf));
+//     // assert(result == strlen(twopgs_buf));
+
+//     char stack_buf[sz];
+//     result = sos_read(console_fd, &stack_buf, sz);
+//     assert(result == sz);
+//     // printf("result read: %d\n", result);
+//     result = sos_write(console_fd, &stack_buf, sz);
+//     // printf("result write: %d\n", result);
+//     assert(result == sz);
+// }
+// int main(void) {
+//     // printf("SOSH Starting!!\n");
+//     int console_fd = sos_open("console", O_RDONLY);
+//     console_fd = sos_open("console", O_WRONLY);
+//     assert(console_fd == CONSOLE_FD);
+//     test_buffers(console_fd);
+//     // test_2_pages_buffer(console_fd);
+//     while(1);
+// }
+
 
 // #include "benchmark.h"
 
@@ -349,52 +418,6 @@ int main(void)
 //     {"benchmark", benchmark}
 // };
 
-// #define SMALL_BUF_SZ 2
-// #define MEDIUM_BUF_SZ 256
-
-// char test_str[] = "Basic test string for read/write";
-// char small_buf[SMALL_BUF_SZ];
-
-// int test_buffers(int console_fd) {
-//     int result;
-//    /* test a small string from the code segment */
-//    result = sos_write(console_fd, test_str, strlen(test_str));
-//    assert(result == strlen(test_str));
-
-//     /* test reading to a small buffer */
-//     result = sos_read(console_fd, small_buf, SMALL_BUF_SZ);
-//     /* make sure you type in at least SMALL_BUF_SZ */
-//     assert(result == SMALL_BUF_SZ);
-
-//     /* test reading into a large on-stack buffer */
-//     char stack_buf[MEDIUM_BUF_SZ];
-//     /* for this test you'll need to paste a lot of data into
-//         the console, without newlines */
-
-//     result = sos_read(console_fd, &stack_buf, MEDIUM_BUF_SZ);
-//     assert(result == MEDIUM_BUF_SZ);
-
-//     result = sos_write(console_fd, &stack_buf, MEDIUM_BUF_SZ);
-//     assert(result == MEDIUM_BUF_SZ);
-
-//     /* try sleeping */
-//     for (int i = 0; i < 5; i++) {
-//         time_t prev_seconds = time(NULL);
-//         sleep(1);
-//         time_t next_seconds = time(NULL);
-//         assert(next_seconds > prev_seconds);
-//         printf("Tick\n");
-//     }
-// }
-
-// int main(void) {
-//     printf("SOSH Starting!!\n");
-//     int console_fd = sos_open("console", O_RDONLY);
-//     console_fd = sos_open("console", O_WRONLY);
-//     assert(console_fd == CONSOLE_FD);
-//     test_buffers(console_fd);
-//     while(1);
-// }
 // int main(void)
 // {
 //     char buf[BUF_SIZ];

@@ -108,16 +108,16 @@ int sos_write(int file, const char *buf, size_t nbyte)
      * check the valid file status for other files > 2
     */
     if (file > 2 && (file > MAX_NUM_FILES || !cur_file->is_opened || !HAS_FM_WRITE(cur_file->mode))) return -1;
+    
+    seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 4);
+    seL4_SetMR(0, SYSCALL_SOS_WRITE); 
+    seL4_SetMR(1, buf);
+    // printf("sending nbytes: %d\n", nbyte);
+    seL4_SetMR(2, nbyte);
+    seL4_SetMR(3, file);
+    seL4_Call(SOS_IPC_EP_CAP, tag);
 
-    for (size_t i = 0; i < nbyte; ++i) {
-        seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 3);
-        seL4_SetMR(0, SYSCALL_SOS_WRITE); 
-        seL4_SetMR(1, buf[i]);
-        seL4_SetMR(2, file);
-        seL4_Call(SOS_IPC_EP_CAP, tag);
-    }
-    return nbyte;
-
+    return seL4_GetMR(0);
 }
 
 int sos_getdirent(int pos, char *name, size_t nbyte)
