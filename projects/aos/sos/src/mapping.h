@@ -24,9 +24,11 @@ struct paging_object
     seL4_CPtr slot;
 };
 
-struct frame_ref_object
+struct frame_metadata
 {
     frame_ref_t frame_ref;
+    seL4_Word vaddr;
+    seL4_CPtr frame_cap;
 };
 
 struct vm_region
@@ -37,7 +39,7 @@ struct vm_region
     bool grows_downward;
 };
 typedef struct vm_region vm_region_t;
-
+typedef struct frame_metadata frame_metadata_t;
 vm_region_t *add_vm_region(list_t *vm_regions, uintptr_t vaddr_base, size_t size, seL4_CapRights_t permission, bool grows_downward);
 /**
  * Maps a page.

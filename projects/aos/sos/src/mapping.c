@@ -206,9 +206,11 @@ seL4_Error sos_map_frame(cspace_t *cspace, frame_ref_t frame_ref, seL4_CPtr fram
 {
     seL4_Error err = sos_map_frame_impl(cspace, frame_cap, vspace, vaddr, rights, attr, NULL, NULL, paging_objects);
     if (!err) {
-        struct frame_ref_object *frame_ref_object = malloc(sizeof(struct frame_ref_object));
-        frame_ref_object->frame_ref = frame_ref;
-        list_append(frame_refs, frame_ref_object);
+        frame_metadata_t *frame_metadata = malloc(sizeof(frame_metadata_t));
+        frame_metadata->frame_ref = frame_ref;
+        frame_metadata->vaddr = vaddr;
+        frame_metadata->frame_cap = frame_cap;
+        list_append(frame_refs, frame_metadata);
     }
     return err;
 }
