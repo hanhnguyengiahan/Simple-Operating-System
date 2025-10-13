@@ -114,10 +114,63 @@ void timeout_callback(uint32_t id, void *data) {
 
 void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
     ZF_LOGV("syscall: write!\n");
-    char byte_to_send[1] = { seL4_GetMR(1) };
-    network_console_send(network_console, byte_to_send, 1);
+
+    *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
     
-    *reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
+    uintptr_t buf_vaddr     = seL4_GetMR(1);
+    size_t nbytes           = seL4_GetMR(2);
+    int file_desc           = seL4_GetMR(3);
+    
+    size_t rem_bytes        = nbytes;
+    while (rem_bytes > 0) {
+        bool found_page = false;
+        for (   struct list_node *cur = user_process.frame_refs->head; 
+                cur != NULL; 
+                cur = cur->next) 
+        {
+            frame_metadata_t *frame = (frame_metadata_t *)cur->data;
+            // finds frame whose vaddr range includes buf_vaddr 
+            if (frame->vaddr <= buf_vaddr && buf_vaddr < frame->vaddr + PAGE_SIZE_4K) {
+                found_page = true;
+                unsigned char* data = frame_data(frame->frame_ref);
+                size_t offset = buf_vaddr % PAGE_SIZE_4K;
+                size_t max_bytes_to_send = PAGE_SIZE_4K - offset;
+    
+                /*  [  offset  ][  max_bytes_to_send  ]
+                    [          4096 bytes             ]
+                    A frame has 4096 bytes, but the buf data only starts at data[offset].
+                    Hence, there are only (PAGE_SIZE_4K - offset) bytes left to send.
+                    
+                    If rem_bytes is smaller than max_bytes_to_send, so we send rem_bytes only.
+                    Otherwise, we send max_bytes_to_send only, 
+                    leaving (rem_bytes - max_bytes_to_send) bytes for the next iteration.
+                */
+                size_t bytes_to_send = MIN(rem_bytes, max_bytes_to_send);
+                size_t bytes_sent = network_console_send(network_console, &data[offset], bytes_to_send);
+                if (bytes_sent == -1) {
+                    ZF_LOGE("Failed to send %d bytes via network_console_send", bytes_to_send);
+                    seL4_SetMR(0, -1);
+                    return;
+                }
+                rem_bytes -= bytes_sent;
+
+                /*  Moves buf_vaddr up by bytes_sent.
+                */
+                buf_vaddr += bytes_sent;
+                break;
+            }
+        }
+        
+        if (!found_page) {
+            ZF_LOGE("Unable to find a frame for buf_vaddr at %p", buf_vaddr);
+            seL4_SetMR(0, -1);
+            return;
+        }
+    }
+    
+    seL4_SetMR(0, nbytes - rem_bytes);
+    // seL4_SetMR(0, nbytes);
+    return;
 }
 
 void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
