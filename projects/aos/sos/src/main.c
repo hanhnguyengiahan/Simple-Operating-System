@@ -121,7 +121,7 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
     size_t nbytes           = seL4_GetMR(2);
     int file_desc           = seL4_GetMR(3);
     
-    size_t rem_bytes        = nbytes;
+    size_t rem_bytes = nbytes;
     while (rem_bytes > 0) {
         bool found_page = false;
         for (   struct list_node *cur = user_process.frame_refs->head; 
@@ -152,10 +152,8 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
                     seL4_SetMR(0, -1);
                     return;
                 }
-                rem_bytes -= bytes_sent;
 
-                /*  Moves buf_vaddr up by bytes_sent.
-                */
+                rem_bytes -= bytes_sent;
                 buf_vaddr += bytes_sent;
                 break;
             }
