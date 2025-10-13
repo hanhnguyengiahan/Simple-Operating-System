@@ -204,14 +204,38 @@ seL4_Error map_frame(cspace_t *cspace, seL4_CPtr frame_cap, seL4_CPtr vspace, se
 seL4_Error sos_map_frame(cspace_t *cspace, frame_ref_t frame_ref, seL4_CPtr frame_cap, seL4_CPtr vspace, seL4_Word vaddr,
                      seL4_CapRights_t rights, seL4_ARM_VMAttributes attr, list_t *paging_objects, list_t *frame_refs)
 {
+    // does not map the first page of the virtual address space
+    // This prevents accidental usage of NULL 
+    if (vaddr < PAGE_SIZE_4K) {
+        ZF_LOGE("vaddr must not be within the first page of the virtual address space");
+        return seL4_InvalidArgument;
+    }
+
     seL4_Error err = sos_map_frame_impl(cspace, frame_cap, vspace, vaddr, rights, attr, NULL, NULL, paging_objects);
     if (!err) {
-        struct frame_ref_object *frame_ref_object = malloc(sizeof(struct frame_ref_object));
-        frame_ref_object->frame_ref = frame_ref;
-        list_append(frame_refs, frame_ref_object);
+        frame_metadata_t *frame_metadata = malloc(sizeof(frame_metadata_t));
+        frame_metadata->frame_ref = frame_ref;
+        frame_metadata->vaddr = vaddr;
+        frame_metadata->frame_cap = frame_cap;
+        list_append(frame_refs, frame_metadata);
     }
     return err;
 }
+
+vm_region_t *add_vm_region(list_t *vm_regions, uintptr_t vaddr_base, size_t size, seL4_CapRights_t permission, bool grows_downward) {
+    vm_region_t *region = malloc(sizeof(vm_region_t));
+    if (region == NULL) {
+        // allocation failed
+        return NULL;
+    }
+    region->vaddr_base = vaddr_base;
+    region->size = size;
+    region->permission = permission;
+    region->grows_downward = grows_downward;
+    list_append(vm_regions, region);
+    return region;
+}
+
 static uintptr_t device_virt = SOS_DEVICE_START;
 
 void *sos_map_device(cspace_t *cspace, uintptr_t addr, size_t size)

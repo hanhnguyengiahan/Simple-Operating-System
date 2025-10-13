@@ -72,7 +72,7 @@ static inline seL4_CapRights_t get_sel4_rights_from_elf(unsigned long permission
  *
  */
 static int load_segment_into_vspace(cspace_t *cspace, seL4_CPtr loadee, const char *src, size_t segment_size,
-                                    size_t file_size, uintptr_t dst, seL4_CapRights_t permissions)
+                                    size_t file_size, uintptr_t dst, seL4_CapRights_t permissions, list_t *paging_objects, list_t *frame_refs)
 {
     assert(file_size <= segment_size);
 
@@ -104,8 +104,15 @@ static int load_segment_into_vspace(cspace_t *cspace, seL4_CPtr loadee, const ch
         }
 
         /* map the frame into the loadee address space */
-        err = map_frame(cspace, loadee_frame, loadee, loadee_vaddr, permissions,
-                        seL4_ARM_Default_VMAttributes);
+        err = sos_map_frame(cspace, frame, loadee_frame, loadee, loadee_vaddr, permissions,
+                        seL4_ARM_Default_VMAttributes, paging_objects, frame_refs);
+        if (err != seL4_NoError) {
+            cspace_delete(cspace, loadee_frame);
+            cspace_free_slot(cspace, loadee_frame);
+            free_frame(frame);
+            ZF_LOGE("Unable to map frame into loadee adress space");
+            return 0;
+        }
 
         /* A frame has already been mapped at this address. This occurs when segments overlap in
          * the same frame, which is permitted by the standard. That's fine as we
@@ -154,9 +161,9 @@ static int load_segment_into_vspace(cspace_t *cspace, seL4_CPtr loadee, const ch
     return 0;
 }
 
-int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file)
+int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file, user_process_t *user_process)
 {
-
+    uintptr_t heap_vaddr_base;
     int num_headers = elf_getNumProgramHeaders(elf_file);
     for (int i = 0; i < num_headers; i++) {
 
@@ -172,14 +179,32 @@ int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file)
         uintptr_t vaddr = elf_getProgramHeaderVaddr(elf_file, i);
         seL4_Word flags = elf_getProgramHeaderFlags(elf_file, i);
 
-        /* Copy it across into the vspace. */
-        ZF_LOGD(" * Loading segment %p-->%p\n", (void *) vaddr, (void *)(vaddr + segment_size));
-        int err = load_segment_into_vspace(cspace, loadee_vspace, source_addr, segment_size, file_size, vaddr,
-                                           get_sel4_rights_from_elf(flags));
-        if (err) {
-            ZF_LOGE("Elf loading failed!");
+        // heap_vaddr_base must be after the last loaded segment 
+        // we currently assume the last segment to be the DATA segment!
+        heap_vaddr_base = (ROUND_UP(vaddr + segment_size, PAGE_SIZE_4K));
+
+        /* Create a region for this segment */
+        if (add_vm_region(user_process->vm_regions, vaddr, segment_size, get_sel4_rights_from_elf(flags), false) == NULL) {
+            ZF_LOGE("Unable to create a region");
             return -1;
         }
+        
+        /* Copy it across into the vspace. */
+        ZF_LOGE(" * Loading segment %p-->%p\n", (void *) vaddr, (void *)(vaddr + segment_size));
+        int err = load_segment_into_vspace(cspace, loadee_vspace, source_addr, segment_size, file_size, vaddr,
+            get_sel4_rights_from_elf(flags), user_process->paging_objects, user_process->frame_refs);
+            if (err) {
+                ZF_LOGE("Elf loading failed!");
+                return -1;
+            }
+        }
+        
+        
+    /* Create a heap region */
+    user_process->heap_region = add_vm_region(user_process->vm_regions, heap_vaddr_base, 0, seL4_ReadWrite, false);
+    if (user_process->heap_region == NULL) {
+        ZF_LOGE("Unable to create a heap region");
+        return -1;
     }
 
     return 0;

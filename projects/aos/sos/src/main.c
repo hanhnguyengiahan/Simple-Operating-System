@@ -45,13 +45,13 @@
 #include <utils/sglib.h>
 #include <utils/list.h>
 #include <sossharedapi/syscalls.h>
+#include "user_process.h"
 // #include "syscall_handlers/syscall_handlers.h"
 #ifdef CONFIG_SOS_GDB_ENABLED
 #include "debugger.h"
 #endif /* CONFIG_SOS_GDB_ENABLED */
 
 #include <aos/vsyscall.h>
-
 /*
  * To differentiate between signals from notification objects and and IPC messages,
  * we assign a badge to the notification object. The badge that we receive will
@@ -70,7 +70,7 @@
 
 /* The number of additional stack pages to provide to the initial
  * process */
-#define INITIAL_PROCESS_EXTRA_STACK_PAGES 4
+#define INITIAL_PROCESS_EXTRA_STACK_PAGES 9*29
 
 
 /* Network console (nwcs) circular queue buffer, size = MAX_PAYLOAD_SIZE in networkconsole.c */
@@ -94,26 +94,7 @@ static seL4_CPtr sched_ctrl_start;
 static seL4_CPtr sched_ctrl_end;
 
 /* the one process we start */
-static struct {
-    ut_t *tcb_ut;
-    seL4_CPtr tcb;
-    ut_t *vspace_ut;
-    seL4_CPtr vspace;
-
-    ut_t *ipc_buffer_ut;
-    seL4_CPtr ipc_buffer;
-
-    ut_t *sched_context_ut;
-    seL4_CPtr sched_context;
-
-    cspace_t cspace;
-
-    ut_t *stack_ut;
-    seL4_CPtr stack;
-
-    list_t *paging_objects;
-    list_t *frame_refs;
-} user_process;
+static user_process_t user_process;
 
 struct syscall_loop_args {
     seL4_CPtr ep;
@@ -170,6 +151,134 @@ void handler_sos_usleep(seL4_MessageInfo_t *reply_msg, int thread_index) {
     register_timer(msec, timeout_callback, &thread_index);
     seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
 }
+
+void handler_sos_brk(seL4_MessageInfo_t *reply_msg, int thread_index) {
+    ZF_LOGV("syscall: brk!\n");
+    *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
+
+    uintptr_t new_brk = seL4_GetMR(1);
+    if (new_brk == 0) {
+        seL4_SetMR(0, user_process.heap_region->vaddr_base);
+        return;
+    }
+
+    /* check if the new_brk is valid: 
+        - within the heap & stack bottom
+    */
+    
+    uintptr_t stack_bottom = user_process.stack_region->vaddr_base - user_process.stack_region->size;
+    uintptr_t heap_base = user_process.heap_region->vaddr_base;
+    uintptr_t curr_brk = heap_base + user_process.heap_region->size;
+
+    if (new_brk < heap_base || new_brk >= stack_bottom) {
+        ZF_LOGE("New program break is not valid");
+        seL4_SetMR(0, 0);
+        return;
+    }
+
+    if (curr_brk == new_brk) {
+        seL4_SetMR(0, new_brk);
+        return;
+    } else if (curr_brk < new_brk) { /* allocate more memory */
+        uintptr_t next_page_vaddr_to_alloc = ROUND_UP(curr_brk, PAGE_SIZE_4K);
+    
+        while (next_page_vaddr_to_alloc < new_brk) {
+            frame_ref_t frame = alloc_frame();
+            if (frame == NULL_FRAME) {
+                ZF_LOGE("Couldn't allocate additional stack frame");
+                seL4_SetMR(0, 0);
+                return;
+            }
+
+            /* allocate a slot to duplicate the stack frame cap so we can map it into the application */
+            seL4_CPtr frame_cptr = cspace_alloc_slot(&cspace);
+            if (frame_cptr == seL4_CapNull) {
+                free_frame(frame);
+                ZF_LOGE("Failed to alloc slot for stack extra stack frame");
+                seL4_SetMR(0, 0);
+                return;
+            }
+
+            /* copy the stack frame cap into the slot */
+            seL4_Error err = cspace_copy(&cspace, frame_cptr, &cspace, frame_page(frame), seL4_AllRights);
+            if (err != seL4_NoError) {
+                cspace_free_slot(&cspace, frame_cptr);
+                free_frame(frame);
+                ZF_LOGE("Failed to copy cap");
+                seL4_SetMR(0, 0);
+                return;
+            }
+
+            err = sos_map_frame(&cspace, frame, frame_cptr, user_process.vspace, next_page_vaddr_to_alloc,
+                            seL4_AllRights, seL4_ARM_Default_VMAttributes, user_process.paging_objects, user_process.frame_refs);
+            if (err != 0) {
+                cspace_delete(&cspace, frame_cptr);
+                cspace_free_slot(&cspace, frame_cptr);
+                free_frame(frame);
+                ZF_LOGE("Unable to map extra stack frame for user app");
+                seL4_SetMR(0, 0);
+                return;
+            }
+            next_page_vaddr_to_alloc += PAGE_SIZE_4K;
+        }
+    } else { /* deallocate frames */
+        uintptr_t next_page_vaddr_to_dealloc = ROUND_DOWN(curr_brk, PAGE_SIZE_4K);
+        
+        while (next_page_vaddr_to_dealloc >= new_brk) {
+            bool found_page = false;
+            for (   struct list_node *prev = NULL, *cur = user_process.frame_refs->head; 
+                    cur != NULL; 
+                    prev = cur, 
+                    cur = cur->next) 
+            {
+                frame_metadata_t *frame = (frame_metadata_t *)cur->data;
+                if (frame->vaddr == next_page_vaddr_to_dealloc) {
+                    found_page = true;
+
+                    if (prev == NULL) {
+                        /* Removing the list head. */
+                        user_process.frame_refs->head = cur->next;
+                    } else {
+                        prev->next = cur->next;
+                    }
+
+                    seL4_Error err = seL4_ARM_Page_Unmap(frame->frame_cap);
+                    if (err != seL4_NoError) {
+                        ZF_LOGE("Unable to unmap the page when deallocating the frames");
+                        seL4_SetMR(0, 0);
+                        return;
+                    }
+
+                    err = cspace_delete(&cspace, frame->frame_cap);
+                    if (err != seL4_NoError) {
+                        ZF_LOGE("Unable to delete the copy of the frame cap");
+                        seL4_SetMR(0, 0);
+                        return;
+                    }
+
+                    cspace_free_slot(&cspace, frame->frame_cap);
+
+                    free_frame(frame->frame_ref);
+
+                    free(cur);
+                    break;
+                }
+            }
+
+            if (!found_page) {
+                ZF_LOGE("Unable to find the mapped page at vaddr=%p", next_page_vaddr_to_dealloc);
+                seL4_SetMR(0, 0);
+                return;
+            }
+
+            next_page_vaddr_to_dealloc -= PAGE_SIZE_4K;
+        }
+    }
+
+    user_process.heap_region->size = new_brk - heap_base;
+    seL4_SetMR(0, new_brk);
+    return;
+}
 /**
  * Deals with a syscall and sets the message registers before returning the
  * message info to be passed through to seL4_ReplyRecv()
@@ -199,6 +308,9 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
         break;
     case SYSCALL_SOS_USLEEP:
         handler_sos_usleep(&reply_msg, thread_index);   
+        break;
+    case SYSCALL_SOS_BRK:
+        handler_sos_brk(&reply_msg, thread_index);
         break;
     default:
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
@@ -415,7 +527,12 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
             return 0;
         }
     }
-
+    /* Create a stack region */
+    user_process.stack_region = add_vm_region(user_process.vm_regions, stack_top, stack_bottom - stack_top, seL4_ReadWrite, true);
+    if (user_process.stack_region == NULL) {
+        ZF_LOGE("Unable to add stack region");
+        return 0;
+    }
     return stack_top;
 }
 
@@ -463,6 +580,10 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
     /* Initialise a linked list of frame refs */
     user_process.frame_refs = malloc(sizeof(list_t));
     list_init(user_process.frame_refs);
+
+    /* Initialise a linked list of vm_regions */
+    user_process.vm_regions = malloc(sizeof(list_t));
+    list_init(user_process.vm_regions);
 
     /* allocate a new slot in the target cspace which we will mint a badged endpoint cap into --
      * the badge is used to identify the process, which will come in handy when you have multiple
@@ -546,7 +667,7 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
     seL4_Word sp = init_process_stack(&cspace, seL4_CapInitThreadVSpace, &elf_file);
 
     /* load the elf image from the cpio file */
-    err = elf_load(&cspace, user_process.vspace, &elf_file);
+    err = elf_load(&cspace, user_process.vspace, &elf_file, &user_process);
     if (err) {
         ZF_LOGE("Failed to load elf image");
         return false;
@@ -557,6 +678,13 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
                     seL4_AllRights, seL4_ARM_Default_VMAttributes, user_process.paging_objects, user_process.frame_refs);
     if (err != 0) {
         ZF_LOGE("Unable to map IPC buffer for user app");
+        return false;
+    }
+
+    /* Keep track of IPC buffer region */
+    vm_region_t *ipc_region = add_vm_region(user_process.vm_regions, PROCESS_IPC_BUFFER, PAGE_SIZE_4K, seL4_ReadWrite, false);
+    if (ipc_region == NULL) {
+        ZF_LOGE("Unable to add ipc region");
         return false;
     }
 

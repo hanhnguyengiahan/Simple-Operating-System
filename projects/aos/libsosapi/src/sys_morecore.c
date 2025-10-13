@@ -17,6 +17,8 @@
 #include <sys/mman.h>
 #include <errno.h>
 #include <assert.h>
+#include <sel4/sel4.h>
+#include "sos.h"
 
 /*
  * Statically allocated morecore area.
@@ -37,20 +39,21 @@ static uintptr_t morecore_top = (uintptr_t) &morecore_area[MORECORE_AREA_BYTE_SI
 
 long sys_brk(va_list ap)
 {
-
     uintptr_t ret;
     uintptr_t newbrk = va_arg(ap, uintptr_t);
 
-    /*if the newbrk is 0, return the bottom of the heap*/
-    if (!newbrk) {
-        ret = morecore_base;
-    } else if (newbrk < morecore_top && newbrk > (uintptr_t)&morecore_area[0]) {
-        ret = morecore_base = newbrk;
-    } else {
-        ret = 0;
-    }
+    seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 2);
+    seL4_SetMR(0, SYSCALL_SOS_BRK); 
+    seL4_SetMR(1, newbrk);
+    
+    seL4_Call(SOS_IPC_EP_CAP, tag);
 
-    return ret;
+    return (uintptr_t)seL4_GetMR(0);
+}
+
+long sys_madvise(va_list ap) {
+    // TODO: maybe utilize this in the future to make better decisions about memory
+    return 0;
 }
 
 /* Large mallocs will result in muslc calling mmap, so we do a minimal implementation

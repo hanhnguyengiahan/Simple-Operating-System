@@ -17,17 +17,30 @@
 #include "ut.h"
 #include "frame_table.h"
 
+/* TODO: move these data structures to a file called bookkeeping for better clarity. */
 struct paging_object
 {
     ut_t *ut;
     seL4_CPtr slot;
 };
 
-struct frame_ref_object
+struct frame_metadata
 {
     frame_ref_t frame_ref;
+    seL4_Word vaddr;
+    seL4_CPtr frame_cap;
 };
 
+struct vm_region
+{
+    uintptr_t vaddr_base;
+    size_t size;
+    seL4_CapRights_t permission;
+    bool grows_downward;
+};
+typedef struct vm_region vm_region_t;
+typedef struct frame_metadata frame_metadata_t;
+vm_region_t *add_vm_region(list_t *vm_regions, uintptr_t vaddr_base, size_t size, seL4_CapRights_t permission, bool grows_downward);
 /**
  * Maps a page.
  *
@@ -81,6 +94,18 @@ seL4_Error map_frame_cspace(cspace_t *cspace, seL4_CPtr frame_cap, seL4_CPtr vsp
 seL4_Error map_frame(cspace_t *cspace, seL4_CPtr frame_cap, seL4_CPtr vspace, seL4_Word vaddr, seL4_CapRights_t rights,
                      seL4_ARM_VMAttributes attr);
 
+/* Maps a page, allocating intermediate structures and cslots with the cspace provided.
+ * Any intermediate structures, frames, cptrs allocated are saved, so that they can be deleted in the future.
+ *
+ * @param cspace          CSpace which can be used to allocate slots for intermediate paging structures.
+ * @param frame_cap       A capbility to the frame to be mapped (seL4_ARM_SmallPageObject).
+ * @param vspace          A capability to the vspace (seL4_ARM_PageGlobalDirectoryObject).
+ * @param vaddr           The virtual address to map the frame.
+ * @param rights          The access rights for the mapping
+ * @param attr            The VM attributes to use for the mapping
+ *
+ * @return 0 on success
+ */
 seL4_Error sos_map_frame(cspace_t *cspace, frame_ref_t frame_ref, seL4_CPtr frame_cap, seL4_CPtr vspace, seL4_Word vaddr, seL4_CapRights_t rights,
                          seL4_ARM_VMAttributes attr, list_t *paging_objects, list_t *frame_refs);
 /*

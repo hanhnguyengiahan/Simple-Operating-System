@@ -15,5 +15,7 @@
 #include <cspace/cspace.h>
 #include <elf/elf.h>
 #include <elf.h>
+#include "mapping.h"
+#include "user_process.h"
 
-int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file);
+int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file, user_process_t *user_process);
