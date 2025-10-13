@@ -167,10 +167,13 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
     }
     
     seL4_SetMR(0, nbytes - rem_bytes);
-    // seL4_SetMR(0, nbytes);
     return;
 }
 
+/*  nwcs_reader must be set to -1 before the function retunrs. 
+    write_to_buf() will signal when nwcs_reader != -1, so not setting it back to -1
+    will make write_to_buf() signals the syscall loop instead.
+*/
 void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
     ZF_LOGV("syscall: read!\n");
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
@@ -193,7 +196,7 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
                 frame_metadata_t *frame = (frame_metadata_t *)cur->data;
                 size_t offset = buf_vaddr % PAGE_SIZE_4K;
 
-                if (frame->vaddr < buf_vaddr && buf_vaddr < frame->vaddr + PAGE_SIZE_4K) {
+                if (frame->vaddr <= buf_vaddr && buf_vaddr < frame->vaddr + PAGE_SIZE_4K) {
                     // write the character to the frame
                     found_page = true;
                     size_t num_bytes_to_write = MIN(remaining_bytes, PAGE_SIZE_4K - offset);
@@ -956,6 +959,7 @@ NORETURN void *main_continued(UNUSED void *arg)
 
         worker_threads[i] = thread;
     }
+
 
     /* Start user process */
     printf("Start first process\n");
