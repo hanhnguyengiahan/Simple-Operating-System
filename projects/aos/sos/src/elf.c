@@ -172,27 +172,27 @@ int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file, user_pr
         uintptr_t vaddr = elf_getProgramHeaderVaddr(elf_file, i);
         seL4_Word flags = elf_getProgramHeaderFlags(elf_file, i);
 
-        if (i == num_headers - 1) {
-            heap_vaddr_base = (ROUND_UP(vaddr + segment_size, PAGE_SIZE_4K));
-        }
+        // heap_vaddr_base must be after the last loaded segment 
+        // we currently assume the last segment to be the DATA segment!
+        heap_vaddr_base = (ROUND_UP(vaddr + segment_size, PAGE_SIZE_4K));
 
         /* Create a region for this segment */
         if (add_vm_region(user_process->vm_regions, vaddr, segment_size, get_sel4_rights_from_elf(flags), false) == NULL) {
             ZF_LOGE("Unable to create a region");
             return -1;
         }
-
+        
         /* Copy it across into the vspace. */
         ZF_LOGE(" * Loading segment %p-->%p\n", (void *) vaddr, (void *)(vaddr + segment_size));
         int err = load_segment_into_vspace(cspace, loadee_vspace, source_addr, segment_size, file_size, vaddr,
-                                           get_sel4_rights_from_elf(flags), user_process->paging_objects, user_process->frame_refs);
-        if (err) {
-            ZF_LOGE("Elf loading failed!");
-            return -1;
+            get_sel4_rights_from_elf(flags), user_process->paging_objects, user_process->frame_refs);
+            if (err) {
+                ZF_LOGE("Elf loading failed!");
+                return -1;
+            }
         }
-    }
-    
-    
+        
+        
     /* Create a heap region */
     user_process->heap_region = add_vm_region(user_process->vm_regions, heap_vaddr_base, 0, seL4_ReadWrite, false);
     if (user_process->heap_region == NULL) {
