@@ -152,7 +152,7 @@ void handler_sos_usleep(seL4_MessageInfo_t *reply_msg, int thread_index) {
     seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
 }
 
-void handler_sos_brk(seL4_MessageInfo_t *reply_msg, int thread_index) {
+void handler_sos_brk(seL4_MessageInfo_t *reply_msg) {
     ZF_LOGV("syscall: brk!\n");
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
 
@@ -166,11 +166,11 @@ void handler_sos_brk(seL4_MessageInfo_t *reply_msg, int thread_index) {
         - within the heap & stack bottom
     */
     
-    uintptr_t stack_bottom = user_process.stack_region->vaddr_base - user_process.stack_region->size;
+    uintptr_t guard_page_vaddr = user_process.guard_page_vaddr;
     uintptr_t heap_base = user_process.heap_region->vaddr_base;
     uintptr_t curr_brk = heap_base + user_process.heap_region->size;
 
-    if (new_brk < heap_base || new_brk >= stack_bottom) {
+    if (new_brk < heap_base || new_brk > guard_page_vaddr) {
         ZF_LOGE("New program break is not valid");
         seL4_SetMR(0, 0);
         return;
@@ -185,21 +185,21 @@ void handler_sos_brk(seL4_MessageInfo_t *reply_msg, int thread_index) {
         while (next_page_vaddr_to_alloc < new_brk) {
             frame_ref_t frame = alloc_frame();
             if (frame == NULL_FRAME) {
-                ZF_LOGE("Couldn't allocate additional stack frame");
+                ZF_LOGE("Couldn't allocate additional frame");
                 seL4_SetMR(0, 0);
                 return;
             }
 
-            /* allocate a slot to duplicate the stack frame cap so we can map it into the application */
+            /* allocate a slot to duplicate the frame cap so we can map it into the application */
             seL4_CPtr frame_cptr = cspace_alloc_slot(&cspace);
             if (frame_cptr == seL4_CapNull) {
                 free_frame(frame);
-                ZF_LOGE("Failed to alloc slot for stack extra stack frame");
+                ZF_LOGE("Failed to alloc slot for extra frame cap");
                 seL4_SetMR(0, 0);
                 return;
             }
 
-            /* copy the stack frame cap into the slot */
+            /* copy the frame cap into the slot */
             seL4_Error err = cspace_copy(&cspace, frame_cptr, &cspace, frame_page(frame), seL4_AllRights);
             if (err != seL4_NoError) {
                 cspace_free_slot(&cspace, frame_cptr);
@@ -215,7 +215,7 @@ void handler_sos_brk(seL4_MessageInfo_t *reply_msg, int thread_index) {
                 cspace_delete(&cspace, frame_cptr);
                 cspace_free_slot(&cspace, frame_cptr);
                 free_frame(frame);
-                ZF_LOGE("Unable to map extra stack frame for user app");
+                ZF_LOGE("Unable to map extra frame for user app");
                 seL4_SetMR(0, 0);
                 return;
             }
@@ -310,7 +310,7 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
         handler_sos_usleep(&reply_msg, thread_index);   
         break;
     case SYSCALL_SOS_BRK:
-        handler_sos_brk(&reply_msg, thread_index);
+        handler_sos_brk(&reply_msg);
         break;
     default:
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
@@ -533,6 +533,7 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
         ZF_LOGE("Unable to add stack region");
         return 0;
     }
+    user_process.guard_page_vaddr = stack_bottom - PAGE_SIZE_4K;
     return stack_top;
 }
 
