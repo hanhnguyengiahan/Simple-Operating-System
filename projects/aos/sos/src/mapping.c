@@ -230,6 +230,8 @@ seL4_Error sos_map_frame(cspace_t *cspace, frame_ref_t frame_ref, seL4_CPtr fram
             ZF_LOGE("Failed to shadow map frame");
             return seL4_NotEnoughMemory;
         }
+    } else {
+        ZF_LOGE("Error from sos_map_frame_impl: %lu\n", err);
     }
     return err;
 }
