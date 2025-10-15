@@ -255,39 +255,8 @@ void handler_sos_brk(seL4_MessageInfo_t *reply_msg) {
         uintptr_t next_page_vaddr_to_alloc = ROUND_UP(curr_brk, PAGE_SIZE_4K);
     
         while (next_page_vaddr_to_alloc < new_brk) {
-            frame_ref_t frame = alloc_frame();
-            if (frame == NULL_FRAME) {
-                ZF_LOGE("Couldn't allocate additional frame");
-                seL4_SetMR(0, 0);
-                return;
-            }
-
-            /* allocate a slot to duplicate the frame cap so we can map it into the application */
-            seL4_CPtr frame_cptr = cspace_alloc_slot(&cspace);
-            if (frame_cptr == seL4_CapNull) {
-                free_frame(frame);
-                ZF_LOGE("Failed to alloc slot for extra frame cap");
-                seL4_SetMR(0, 0);
-                return;
-            }
-
-            /* copy the frame cap into the slot */
-            seL4_Error err = cspace_copy(&cspace, frame_cptr, &cspace, frame_page(frame), seL4_AllRights);
-            if (err != seL4_NoError) {
-                cspace_free_slot(&cspace, frame_cptr);
-                free_frame(frame);
-                ZF_LOGE("Failed to copy cap");
-                seL4_SetMR(0, 0);
-                return;
-            }
-
-            err = sos_map_frame(&cspace, frame, frame_cptr, user_process.vspace, next_page_vaddr_to_alloc,
-                            seL4_AllRights, seL4_ARM_Default_VMAttributes, &user_process);
+            int err = allocate_new_frame(&cspace, next_page_vaddr_to_alloc, &user_process);
             if (err != 0) {
-                cspace_delete(&cspace, frame_cptr);
-                cspace_free_slot(&cspace, frame_cptr);
-                free_frame(frame);
-                ZF_LOGE("Unable to map extra frame for user app");
                 seL4_SetMR(0, 0);
                 return;
             }
