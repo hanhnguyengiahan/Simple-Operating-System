@@ -384,6 +384,11 @@ seL4_MessageInfo_t handle_fault(seL4_MessageInfo_t tag, bool *have_reply) {
             handle_vm_fault(fault, &reply_msg, have_reply);
             break;
         default:
+            /* some kind of fault */
+            debug_print_fault(tag, APP_NAME);
+            /* dump registers too */
+            debug_dump_registers(user_process.tcb);
+
             reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
             ZF_LOGE("Unknown fault %lu\n", fault_type);
             /* Don't reply to an unknown fault */
@@ -391,7 +396,6 @@ seL4_MessageInfo_t handle_fault(seL4_MessageInfo_t tag, bool *have_reply) {
             break;
     }
     return reply_msg;
-
 }
 
 
@@ -432,12 +436,8 @@ NORETURN void syscall_loop(void* arg)
              * message from console_test! */
             reply_msg = handle_syscall(badge, seL4_MessageInfo_get_length(message) - 1, &have_reply, ep, thread_index);
         } else {
-            /* Handle the vm fault */
+            /* Handle the fault */
             reply_msg = handle_fault(message, &have_reply);
-            /* some kind of fault */
-            debug_print_fault(message, APP_NAME);
-            /* dump registers too */
-            debug_dump_registers(user_process.tcb);
         }
     }
 }
