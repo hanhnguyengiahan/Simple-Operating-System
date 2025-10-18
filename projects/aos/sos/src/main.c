@@ -76,9 +76,9 @@
 
 
 /* Network console (nwcs) circular queue buffer */
-#define DIM 8092
+#define DIM (size_t)8092
 static char nwcs_buf[DIM];
-static int i, j;
+static size_t i, j;
 static int nwcs_reader = -1; // thread index that is currently the nwcs reader
 
 /* The linker will link this symbol to the start address  *
@@ -127,7 +127,7 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
     while (rem_bytes > 0) {
         frame_metadata_t *frame = find_frame(buf_vaddr, user_process.page_global_directory);
         if (!frame) {
-            ZF_LOGE("Unable to find a frame for buf_vaddr at %p", buf_vaddr);
+            ZF_LOGE("Unable to find a frame for buf_vaddr at %p", (void*)buf_vaddr);
             seL4_SetMR(0, -1);
             return;
         }
@@ -146,9 +146,9 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
             leaving (rem_bytes - max_bytes_to_send) bytes for the next iteration.
         */
         size_t bytes_to_send = MIN(rem_bytes, max_bytes_to_send);
-        int bytes_sent = network_console_send(network_console, &data[offset], bytes_to_send);
+        int bytes_sent = network_console_send(network_console, (char*)&data[offset], bytes_to_send);
         if (bytes_sent == -1) {
-            ZF_LOGE("Failed to send %d bytes via network_console_send", bytes_to_send);
+            ZF_LOGE("Failed to send %lu bytes via network_console_send", bytes_to_send);
             seL4_SetMR(0, -1);
             return;
         }
@@ -170,8 +170,8 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
    
     uintptr_t buf_vaddr = seL4_GetMR(2);
-    int nbytes = seL4_GetMR(3);
-    int remaining_bytes = nbytes;
+    size_t nbytes = seL4_GetMR(3);
+    size_t remaining_bytes = nbytes;
     
     while (remaining_bytes > 0) {
         if (SGLIB_QUEUE_IS_EMPTY(char, nwcs_buf, i, j)) {
@@ -181,7 +181,7 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
         // find the frame associated with this buf_vaddr
         frame_metadata_t *frame = find_frame(buf_vaddr, user_process.page_global_directory);
         if (!frame) {
-            ZF_LOGE("page not found for buf_vaddr=%p\n", buf_vaddr);
+            ZF_LOGE("page not found for buf_vaddr=%p\n", (void*)buf_vaddr);
             nwcs_reader = -1;
             seL4_SetMR(0, nbytes - remaining_bytes);
             break;
@@ -193,7 +193,7 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
         num_bytes_to_write = MIN(num_bytes_to_write, SGLIB_QUEUE_LENGTH(char, nwcs_buf, i, j, DIM));
 
         unsigned char* data = frame_data(frame->frame_ref);
-        for (int index = 0; index < num_bytes_to_write; index++) {
+        for (size_t index = 0; index < num_bytes_to_write; index++) {
             char char_to_write = SGLIB_QUEUE_FIRST_ELEMENT(char, nwcs_buf, i, j);
             data[offset + index] = char_to_write;
             remaining_bytes -= 1;
@@ -259,7 +259,7 @@ void handler_sos_brk(seL4_MessageInfo_t *reply_msg) {
         while (next_page_vaddr_to_alloc < new_brk) {
             int result = allocate_new_frame(&cspace, next_page_vaddr_to_alloc, &user_process, user_process.heap_region->permission);
             if (result != 0) {
-                ZF_LOGE("Unable to allocate a new frame at %p!\n", next_page_vaddr_to_alloc);
+                ZF_LOGE("Unable to allocate a new frame at %p!\n", (void*)next_page_vaddr_to_alloc);
                 seL4_SetMR(0, 0);
                 return;
             }
@@ -286,7 +286,7 @@ void handler_sos_brk(seL4_MessageInfo_t *reply_msg) {
  * Deals with a syscall and sets the message registers before returning the
  * message info to be passed through to seL4_ReplyRecv()
  */
-seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, bool *have_reply, seL4_CPtr ep, int thread_index)
+seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, bool *have_reply, int thread_index)
 {
     seL4_MessageInfo_t reply_msg;
 
@@ -325,7 +325,7 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
     return reply_msg;
 }
 
-void write_to_buf(struct network_console *network_console, char c) {
+void write_to_buf(UNUSED struct network_console *network_console, char c) {
     bool is_empty_before = SGLIB_QUEUE_IS_EMPTY(char, nwcs_buf, i, j);
     SGLIB_QUEUE_ADD(char, nwcs_buf, c, i, j, DIM);
     if (is_empty_before && nwcs_reader != -1) {
@@ -333,19 +333,19 @@ void write_to_buf(struct network_console *network_console, char c) {
     }
 }
 void handle_vm_fault(seL4_Fault_t fault, seL4_MessageInfo_t *reply_msg, bool *have_reply) {
-    seL4_Uint64 faultaddr = ROUND_DOWN(seL4_Fault_VMFault_get_Addr(fault), PAGE_SIZE_4K);
+    uintptr_t faultaddr = ROUND_DOWN(seL4_Fault_VMFault_get_Addr(fault), PAGE_SIZE_4K);
     seL4_Uint64 fsr = seL4_Fault_VMFault_get_FSR(fault);
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
     vm_region_t *valid_region = find_valid_region(faultaddr, fsr, user_process.vm_regions);
     if (valid_region == NULL) {
-        ZF_LOGE("Fault address %p resolves to an invalid region access", faultaddr);
+        ZF_LOGE("Fault address %p resolves to an invalid region access", (void*)faultaddr);
         *have_reply = false; // don't reply to the user process if the fault vaddr is invalid
         return;
     }
     
     int result = allocate_new_frame(&cspace, faultaddr, &user_process, valid_region->permission);
     if (result != 0) {
-        ZF_LOGE("Unable to allocate a new frame at %p!\n", faultaddr);
+        ZF_LOGE("Unable to allocate a new frame at %p!\n", (void*)faultaddr);
         *have_reply = false;
         return;
     }
@@ -415,7 +415,7 @@ NORETURN void syscall_loop(void* arg)
         } else if (label == seL4_Fault_NullFault) {
             /* It's not a fault or an interrupt, it must be an IPC
              * message from console_test! */
-            reply_msg = handle_syscall(badge, seL4_MessageInfo_get_length(message) - 1, &have_reply, ep, thread_index);
+            reply_msg = handle_syscall(badge, seL4_MessageInfo_get_length(message) - 1, &have_reply, thread_index);
         } else {
             /* Handle the fault */
             reply_msg = handle_fault(message, &have_reply);
@@ -529,7 +529,7 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
         stack_bottom -= PAGE_SIZE_4K;
         int result = allocate_new_frame(cspace, stack_bottom, &user_process, seL4_ReadWrite);
         if (result != 0) {
-            ZF_LOGE("Unable to allocate a new frame at %p!\n", stack_bottom);
+            ZF_LOGE("Unable to allocate a new frame at %p!\n", (void*)stack_bottom);
             return 0;
         }
     }
@@ -569,14 +569,6 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
     err = cspace_create_one_level(&cspace, &user_process.cspace);
     if (err != CSPACE_NOERROR) {
         ZF_LOGE("Failed to create cspace");
-        return false;
-    }
-
-    /* Create an IPC buffer */
-    user_process.ipc_buffer_ut = alloc_retype(&user_process.ipc_buffer, seL4_ARM_SmallPageObject,
-                                                  seL4_PageBits);
-    if (user_process.ipc_buffer_ut == NULL) {
-        ZF_LOGE("Failed to alloc ipc buffer ut");
         return false;
     }
 
