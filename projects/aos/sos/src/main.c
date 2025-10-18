@@ -46,6 +46,7 @@
 #include <utils/list.h>
 #include <sossharedapi/syscalls.h>
 #include "user_process.h"
+#include "pagetable.h"
 #include "vm_region.h"
 // #include "syscall_handlers/syscall_handlers.h"
 #ifdef CONFIG_SOS_GDB_ENABLED
@@ -53,6 +54,7 @@
 #endif /* CONFIG_SOS_GDB_ENABLED */
 
 #include <aos/vsyscall.h>
+#include "backtrace.h"
 /*
  * To differentiate between signals from notification objects and and IPC messages,
  * we assign a badge to the notification object. The badge that we receive will
@@ -75,9 +77,9 @@
 
 
 /* Network console (nwcs) circular queue buffer */
-#define DIM 8092
+#define DIM (size_t)8092
 static char nwcs_buf[DIM];
-static int i, j;
+static size_t i, j;
 static int nwcs_reader = -1; // thread index that is currently the nwcs reader
 
 /* The linker will link this symbol to the start address  *
@@ -126,7 +128,7 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
     while (rem_bytes > 0) {
         frame_metadata_t *frame = find_frame(buf_vaddr, user_process.page_global_directory);
         if (!frame) {
-            ZF_LOGE("Unable to find a frame for buf_vaddr at %p", buf_vaddr);
+            ZF_LOGE("Unable to find a frame for buf_vaddr at %p", (void*)buf_vaddr);
             seL4_SetMR(0, -1);
             return;
         }
@@ -145,9 +147,9 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
             leaving (rem_bytes - max_bytes_to_send) bytes for the next iteration.
         */
         size_t bytes_to_send = MIN(rem_bytes, max_bytes_to_send);
-        size_t bytes_sent = network_console_send(network_console, &data[offset], bytes_to_send);
+        int bytes_sent = network_console_send(network_console, (char*)&data[offset], bytes_to_send);
         if (bytes_sent == -1) {
-            ZF_LOGE("Failed to send %d bytes via network_console_send", bytes_to_send);
+            ZF_LOGE("Failed to send %lu bytes via network_console_send", bytes_to_send);
             seL4_SetMR(0, -1);
             return;
         }
@@ -169,9 +171,8 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
    
     uintptr_t buf_vaddr = seL4_GetMR(2);
-    int nbytes = seL4_GetMR(3);
-    int remaining_bytes = nbytes;
-    
+    size_t nbytes = seL4_GetMR(3);
+    size_t remaining_bytes = nbytes;
     while (remaining_bytes > 0) {
         if (SGLIB_QUEUE_IS_EMPTY(char, nwcs_buf, i, j)) {
             nwcs_reader = thread_index;
@@ -180,7 +181,7 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
         // find the frame associated with this buf_vaddr
         frame_metadata_t *frame = find_frame(buf_vaddr, user_process.page_global_directory);
         if (!frame) {
-            ZF_LOGE("page not found for buf_vaddr=%p\n", buf_vaddr);
+            ZF_LOGE("page not found for buf_vaddr=%p\n", (void*)buf_vaddr);
             nwcs_reader = -1;
             seL4_SetMR(0, nbytes - remaining_bytes);
             break;
@@ -192,7 +193,7 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
         num_bytes_to_write = MIN(num_bytes_to_write, SGLIB_QUEUE_LENGTH(char, nwcs_buf, i, j, DIM));
 
         unsigned char* data = frame_data(frame->frame_ref);
-        for (int index = 0; index < num_bytes_to_write; index++) {
+        for (size_t index = 0; index < num_bytes_to_write; index++) {
             char char_to_write = SGLIB_QUEUE_FIRST_ELEMENT(char, nwcs_buf, i, j);
             data[offset + index] = char_to_write;
             remaining_bytes -= 1;
@@ -203,7 +204,7 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
                 seL4_SetMR(0, nbytes - remaining_bytes);
                 return;
             }
-        }        
+        }
     }
     nwcs_reader = -1;
     seL4_SetMR(0, nbytes);
@@ -258,7 +259,7 @@ void handler_sos_brk(seL4_MessageInfo_t *reply_msg) {
         while (next_page_vaddr_to_alloc < new_brk) {
             int result = allocate_new_frame(&cspace, next_page_vaddr_to_alloc, &user_process, user_process.heap_region->permission);
             if (result != 0) {
-                ZF_LOGE("Unable to allocate a new frame at %p!\n", next_page_vaddr_to_alloc);
+                ZF_LOGE("Unable to allocate a new frame at %p!\n", (void*)next_page_vaddr_to_alloc);
                 seL4_SetMR(0, 0);
                 return;
             }
@@ -285,7 +286,7 @@ void handler_sos_brk(seL4_MessageInfo_t *reply_msg) {
  * Deals with a syscall and sets the message registers before returning the
  * message info to be passed through to seL4_ReplyRecv()
  */
-seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, bool *have_reply, seL4_CPtr ep, int thread_index)
+seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, bool *have_reply, int thread_index)
 {
     seL4_MessageInfo_t reply_msg;
 
@@ -324,7 +325,7 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
     return reply_msg;
 }
 
-void write_to_buf(struct network_console *network_console, char c) {
+void write_to_buf(UNUSED struct network_console *network_console, char c) {
     bool is_empty_before = SGLIB_QUEUE_IS_EMPTY(char, nwcs_buf, i, j);
     SGLIB_QUEUE_ADD(char, nwcs_buf, c, i, j, DIM);
     if (is_empty_before && nwcs_reader != -1) {
@@ -332,19 +333,19 @@ void write_to_buf(struct network_console *network_console, char c) {
     }
 }
 void handle_vm_fault(seL4_Fault_t fault, seL4_MessageInfo_t *reply_msg, bool *have_reply) {
-    seL4_Uint64 faultaddr = ROUND_DOWN(seL4_Fault_VMFault_get_Addr(fault), PAGE_SIZE_4K);
+    uintptr_t faultaddr = ROUND_DOWN(seL4_Fault_VMFault_get_Addr(fault), PAGE_SIZE_4K);
     seL4_Uint64 fsr = seL4_Fault_VMFault_get_FSR(fault);
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
     vm_region_t *valid_region = find_valid_region(faultaddr, fsr, user_process.vm_regions);
     if (valid_region == NULL) {
-        ZF_LOGE("Fault address %p resolves to an invalid region access", faultaddr);
+        ZF_LOGE("Fault address %p resolves to an invalid region access", (void*)faultaddr);
         *have_reply = false; // don't reply to the user process if the fault vaddr is invalid
         return;
     }
     
     int result = allocate_new_frame(&cspace, faultaddr, &user_process, valid_region->permission);
     if (result != 0) {
-        ZF_LOGE("Unable to allocate a new frame at %p!\n", faultaddr);
+        ZF_LOGE("Unable to allocate a new frame at %p!\n", (void*)faultaddr);
         *have_reply = false;
         return;
     }
@@ -414,7 +415,7 @@ NORETURN void syscall_loop(void* arg)
         } else if (label == seL4_Fault_NullFault) {
             /* It's not a fault or an interrupt, it must be an IPC
              * message from console_test! */
-            reply_msg = handle_syscall(badge, seL4_MessageInfo_get_length(message) - 1, &have_reply, ep, thread_index);
+            reply_msg = handle_syscall(badge, seL4_MessageInfo_get_length(message) - 1, &have_reply, thread_index);
         } else {
             /* Handle the fault */
             reply_msg = handle_fault(message, &have_reply);
@@ -446,37 +447,10 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
         return 0;
     }
 
-    // TODO: PUT THESE THINGS INTO A HELPER FUNCTION PLS
-    frame_ref_t frame = alloc_frame();
-    if (frame == NULL_FRAME) {
-        ZF_LOGE("Couldn't allocate additional stack frame");
-        return 0;
-    }
-
-    /* allocate a slot to duplicate the stack frame cap so we can map it into the application */
-    user_process.stack = cspace_alloc_slot(cspace);
-    if (user_process.stack == seL4_CapNull) {
-        free_frame(frame);
-        ZF_LOGE("Failed to alloc slot for stack extra stack frame");
-        return 0;
-    }
-
-    /* copy the stack frame cap into the slot */
-    seL4_Error err = cspace_copy(cspace, user_process.stack, cspace, frame_page(frame), seL4_AllRights);
-    if (err != seL4_NoError) {
-        cspace_free_slot(cspace, user_process.stack);
-        free_frame(frame);
-        ZF_LOGE("Failed to copy cap");
-        return 0;
-    }
-
-    /* Map in the stack frame for the user app */
-    err = sos_map_frame(cspace, frame, user_process.stack, user_process.vspace, stack_bottom,
-                               seL4_AllRights, seL4_ARM_Default_VMAttributes, &user_process);
-    if (err != 0) {
-        ZF_LOGE("Unable to map stack for user app");
-        return 0;
-    }
+    /* allocate a stack frame for the user application*/
+    seL4_Error err = allocate_new_frame(cspace, stack_bottom, &user_process, seL4_ReadWrite);
+    frame_metadata_t *frame_metadata = find_frame(stack_bottom, user_process.page_global_directory);
+    user_process.stack = frame_metadata->frame_cap;
 
     /* allocate a slot to duplicate the stack frame cap so we can map it into our address space */
     seL4_CPtr local_stack_cptr = cspace_alloc_slot(cspace);
@@ -555,7 +529,7 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
         stack_bottom -= PAGE_SIZE_4K;
         int result = allocate_new_frame(cspace, stack_bottom, &user_process, seL4_ReadWrite);
         if (result != 0) {
-            ZF_LOGE("Unable to allocate a new frame at %p!\n", stack_bottom);
+            ZF_LOGE("Unable to allocate a new frame at %p!\n", (void*)stack_bottom);
             return 0;
         }
     }
@@ -598,22 +572,6 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
         return false;
     }
 
-    /* Create an IPC buffer */
-    user_process.ipc_buffer_ut = alloc_retype(&user_process.ipc_buffer, seL4_ARM_SmallPageObject,
-                                                  seL4_PageBits);
-    if (user_process.ipc_buffer_ut == NULL) {
-        ZF_LOGE("Failed to alloc ipc buffer ut");
-        return false;
-    }
-
-    /* Initialise a linked list of paging objects */
-    user_process.paging_objects = malloc(sizeof(list_t));
-    if (!user_process.paging_objects) {
-        ZF_LOGE("Failed to alloc paging objects");
-        return false;
-    }
-    list_init(user_process.paging_objects);
-
     /* Initialise a linked list of frame refs */
     user_process.page_global_directory = create_pgd();
     if (!user_process.page_global_directory) {
@@ -628,6 +586,24 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
         return false;
     }
     list_init(user_process.vm_regions);
+
+    /* Create an IPC buffer */
+    err = allocate_new_frame(&cspace, PROCESS_IPC_BUFFER, &user_process, seL4_AllRights);
+    if (err != 0) {
+        ZF_LOGE("Unable to map IPC buffer for user app");
+        return false;
+    }
+
+    /* Keep track of IPC buffer region */
+    vm_region_t *ipc_region = add_vm_region(user_process.vm_regions, PROCESS_IPC_BUFFER, PAGE_SIZE_4K, seL4_AllRights, false);
+    if (ipc_region == NULL) {
+        ZF_LOGE("Unable to add ipc region");
+        return false;
+    }
+
+    /* Saves the IPC buffer capability */
+    frame_metadata_t *frame_metadata = find_frame(PROCESS_IPC_BUFFER, user_process.page_global_directory);
+    user_process.ipc_buffer = frame_metadata->frame_cap;
 
     /* allocate a new slot in the target cspace which we will mint a badged endpoint cap into --
      * the badge is used to identify the process, which will come in handy when you have multiple
@@ -711,24 +687,9 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
     seL4_Word sp = init_process_stack(&cspace, seL4_CapInitThreadVSpace, &elf_file);
 
     /* load the elf image from the cpio file */
-    err = elf_load(&cspace, user_process.vspace, &elf_file, &user_process);
+    err = elf_load(&cspace, &elf_file, &user_process);
     if (err) {
         ZF_LOGE("Failed to load elf image");
-        return false;
-    }
-
-    /* Map in the IPC buffer for the thread */
-    err = sos_map_frame(&cspace, NULL_FRAME, user_process.ipc_buffer, user_process.vspace, PROCESS_IPC_BUFFER,
-                    seL4_AllRights, seL4_ARM_Default_VMAttributes, &user_process);
-    if (err != 0) {
-        ZF_LOGE("Unable to map IPC buffer for user app");
-        return false;
-    }
-
-    /* Keep track of IPC buffer region */
-    vm_region_t *ipc_region = add_vm_region(user_process.vm_regions, PROCESS_IPC_BUFFER, PAGE_SIZE_4K, seL4_ReadWrite, false);
-    if (ipc_region == NULL) {
-        ZF_LOGE("Unable to add ipc region");
         return false;
     }
 
