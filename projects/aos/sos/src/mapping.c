@@ -152,12 +152,28 @@ int allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t *user_p
         return -1;
     }
 
-    err = sos_map_frame(cspace, frame, frame_cptr, user_process->vspace, vaddr,
+    frame_metadata_t *frame_metadata = malloc(sizeof(frame_metadata_t));
+    if (!frame_metadata) {
+        ZF_LOGE("Failed to allocate memory for frame_metadata");
+        return -1;
+    }
+
+    frame_metadata->frame_ref = frame;
+    frame_metadata->frame_cap = frame_cptr;
+
+    err = sos_map_frame(cspace, frame_metadata, vaddr,
                     seL4_AllRights, seL4_ARM_Default_VMAttributes, user_process);
     if (err != 0) {
+        // delete the cap and free the allocated slot
         cspace_delete(cspace, frame_cptr);
         cspace_free_slot(cspace, frame_cptr);
+
+        // free a physical frame
         free_frame(frame);
+
+        // free the frame_metadata
+        free(frame_metadata);
+
         ZF_LOGE("Unable to map extra frame for user app, seL4_Error = %d\n", err);
         return -1;
     }
@@ -182,11 +198,14 @@ seL4_Error map_frame(cspace_t *cspace, seL4_CPtr frame_cap, seL4_CPtr vspace, se
     return map_frame_impl(cspace, frame_cap, vspace, vaddr, rights, attr, NULL, NULL);
 }
 
-int sos_map_frame(
-    cspace_t *cspace, frame_ref_t frame_ref, seL4_CPtr frame_cap, 
-    seL4_CPtr vspace, seL4_Word vaddr,
-    seL4_CapRights_t rights, seL4_ARM_VMAttributes attr, 
-    user_process_t *user_process)
+static int sos_map_frame(
+    cspace_t *cspace, 
+    frame_metadata_t *frame_metadata,
+    seL4_Word vaddr,
+    seL4_CapRights_t rights, 
+    seL4_ARM_VMAttributes attr, 
+    user_process_t *user_process
+)
 {
     // does not map the first page of the virtual address space
     // This prevents accidental usage of NULL 
@@ -194,16 +213,6 @@ int sos_map_frame(
         ZF_LOGE("vaddr must not be within the first page of the virtual address space");
         return -1;
     }
-
-    frame_metadata_t *frame_metadata = malloc(sizeof(frame_metadata_t));
-    if (!frame_metadata) {
-        ZF_LOGE("Failed to allocate memory for frame_metadata");
-        return -1;
-    }
-
-    frame_metadata->frame_ref = frame_ref;
-    frame_metadata->vaddr = vaddr;
-    frame_metadata->frame_cap = frame_cap;
 
     int ret = sos_shadow_map_frame(vaddr, frame_metadata, cspace, user_process, rights, attr);
     if (ret == -1) {
