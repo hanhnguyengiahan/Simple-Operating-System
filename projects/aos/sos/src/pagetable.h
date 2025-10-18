@@ -42,7 +42,7 @@ struct page_global_directory {
 typedef struct page_global_directory pgd_t;
 
 /* Returns 0 on success. Otherwise, returns -1. */
-int sos_shadow_map_frame(   
+seL4_Error sos_shadow_map_frame(   
     uintptr_t vaddr, 
     frame_metadata_t *frame_metadata, 
     cspace_t *cspace,
@@ -51,7 +51,6 @@ int sos_shadow_map_frame(
     seL4_ARM_VMAttributes attr
 );
 
-/* Returns 0 on success. Returns -1 if failed. */
 int sos_shadow_unmap_frame(uintptr_t vaddr, pgd_t *pgd, cspace_t *cspace);
 
 pgd_t *create_pgd();

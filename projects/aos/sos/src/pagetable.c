@@ -33,7 +33,7 @@ pgd_t *create_pgd() {
 /*  Maps a page object (Page Upper Directory, Page Directory, or Page Table) into the root servers page global directory.
     Returns 0 on success. On failure, returns -1 and caller must free the page object to prevent memory leak.    
 */
-static int map_page_object(
+static seL4_Error map_page_object(
     seL4_CPtr* slot, 
     ut_t* ut,
     seL4_Word vaddr, cspace_t *cspace, user_process_t *user_process,
@@ -42,7 +42,7 @@ static int map_page_object(
     *slot = cspace_alloc_slot(cspace);
     if (*slot == seL4_CapNull) {
         ZF_LOGE("No cptr to alloc paging structure");
-        return -1;
+        return seL4_NotEnoughMemory;
     }
 
     ut = alloc_retype(slot, seL4_ARM_PageTableObject, seL4_PageBits);
@@ -50,7 +50,7 @@ static int map_page_object(
         ZF_LOGE("Out of 4k untyped");
         cspace_delete(cspace, *slot);
         cspace_free_slot(cspace, *slot);
-        return -1;
+        return seL4_NotEnoughMemory;
     }
 
     seL4_Error err = seL4_ARM_PageTable_Map(*slot, user_process->vspace, vaddr, seL4_ARM_Default_VMAttributes);
@@ -60,72 +60,75 @@ static int map_page_object(
 
         cspace_delete(cspace, *slot);
         cspace_free_slot(cspace, *slot);
-        return -1;
+        return err;
     }
 
-    return 0;
+    return seL4_NoError;
 }
 
-static pud_t *create_pud(seL4_Word vaddr, cspace_t *cspace, user_process_t *user_process) {
+static seL4_Error create_pud(pud_t** source_pud, seL4_Word vaddr, cspace_t *cspace, user_process_t *user_process) {
     pud_t* pud = malloc(sizeof(pud_t));
     if (!pud) {
         ZF_LOGE("Not enough memory to alloc a Page Upper Directory");
-        return NULL;
+        return seL4_NotEnoughMemory;
     }
     
     for (size_t i = 0; i < TABLE_SIZE_BITS; ++i) {
         pud->page_directories[i] = NULL;
     }
 
-    int err = map_page_object(&pud->slot, pud->ut, vaddr, cspace, user_process, PAGE_UPPER_DIRECTORY_NAME);
-    if (err == -1) {
+    seL4_Error err = map_page_object(&pud->slot, pud->ut, vaddr, cspace, user_process, PAGE_UPPER_DIRECTORY_NAME);
+    if (err != seL4_NoError) {
         free(pud);
-        return NULL;
+        return err;
     }
 
-    return pud;
+    *source_pud = pud;
+    return seL4_NoError;
 }
 
-static pd_t *create_pd(seL4_Word vaddr, cspace_t *cspace, user_process_t *user_process) {
-    pd_t *pd = malloc(sizeof(pd_t));
+static seL4_Error create_pd(pd_t** source_pd, seL4_Word vaddr, cspace_t *cspace, user_process_t *user_process) {
+    pd_t* pd = malloc(sizeof(pd_t));
     if (!pd) {
         ZF_LOGE("Not enough memory to alloc a Page Directory");
-        return NULL;
+        return seL4_NotEnoughMemory;
     }
     
     for (size_t i = 0; i < TABLE_SIZE_BITS; ++i) {
         pd->page_tables[i] = NULL;
     }
 
-    int err = map_page_object(&pd->slot, pd->ut, vaddr, cspace, user_process, PAGE_DIRECTORY_NAME);
-    if (err == -1) {
+    seL4_Error err = map_page_object(&pd->slot, pd->ut, vaddr, cspace, user_process, PAGE_DIRECTORY_NAME);
+    if (err != seL4_NoError) {
         free(pd);
-        return NULL;
+        return err;
     }
 
-    return pd;
+    *source_pd = pd;
+    return seL4_NoError;
 }
 
-static pt_t *create_pt(seL4_Word vaddr, cspace_t *cspace, user_process_t *user_process) {
+static seL4_Error create_pt(pt_t** source_pt, seL4_Word vaddr, cspace_t *cspace, user_process_t *user_process) {
     pt_t *pt = malloc(sizeof(pt_t));
     if (!pt) {
         ZF_LOGE("Not enough memory to alloc a Page Table");
-        return NULL;
+        return seL4_NotEnoughMemory;
     }
     for (size_t i = 0; i < TABLE_SIZE_BITS; ++i) {
         pt->frame_metadatas[i] = NULL;
     }
 
-    int err = map_page_object(&pt->slot, pt->ut, vaddr, cspace, user_process, PAGE_TABLE_NAME);
-    if (err == -1) {
+    seL4_Error err = map_page_object(&pt->slot, pt->ut, vaddr, cspace, user_process, PAGE_TABLE_NAME);
+    if (err != seL4_NoError) {
         free(pt);
-        return NULL;
+        return err;
     }
 
-    return pt;
+    *source_pt = pt;
+    return seL4_NoError;
 }
 
-int sos_shadow_map_frame(   
+seL4_Error sos_shadow_map_frame(   
     uintptr_t vaddr, 
     frame_metadata_t *frame_metadata, 
     cspace_t *cspace,
@@ -143,43 +146,43 @@ int sos_shadow_map_frame(
     pd_t* pd;
     pt_t* pt;
 
+    seL4_Error err;
     if (pgd->page_upper_directories[pgd_index] == NULL) {
-        pgd->page_upper_directories[pgd_index] = pud = create_pud(vaddr, cspace, user_process);
-        if (!pud) {
-            ZF_LOGE("Failed to create a %s", PAGE_UPPER_DIRECTORY_NAME);
-            return -1;
+        err = create_pud(&pgd->page_upper_directories[pgd_index], vaddr, cspace, user_process);
+        if (err != seL4_NoError) {
+            ZF_LOGE("Failed to create a %s, seL4_Error: %d", PAGE_UPPER_DIRECTORY_NAME, err);
+            return err;
         }
-    } else {
-        pud = pgd->page_upper_directories[pgd_index];
     }
+    pud = pgd->page_upper_directories[pgd_index];
 
     if (pud->page_directories[pud_index] == NULL) {
-        pud->page_directories[pud_index] = pd = create_pd(vaddr, cspace, user_process);
-        if (!pd) {
-            ZF_LOGE("Failed to create a %s", PAGE_DIRECTORY_NAME);
-            return -1;
+        err = create_pd(&pud->page_directories[pud_index], vaddr, cspace, user_process);
+        if (err != seL4_NoError) {
+            ZF_LOGE("Failed to create a %s, seL4_Error: %d", PAGE_DIRECTORY_NAME, err);
+            return err;
         }
-    } else {
-        pd = pud->page_directories[pud_index];
-    }
+    } 
+    pd = pud->page_directories[pud_index];
+
     
     if (pd->page_tables[pd_index] == NULL) {
-        pd->page_tables[pd_index] = pt = create_pt(vaddr, cspace, user_process);
-        if (!pt) {
-            ZF_LOGE("Failed to create a %s", PAGE_TABLE_NAME);
-            return -1;
+        err = create_pt(&pd->page_tables[pd_index], vaddr, cspace, user_process);
+        if (err != seL4_NoError) {
+            ZF_LOGE("Failed to create a %s, seL4_Error: %d", PAGE_TABLE_NAME, err);
+            return err;
         }
-    } else {
-        pt = pd->page_tables[pd_index];
     }
+    pt = pd->page_tables[pd_index];
 
-    seL4_Error err = seL4_ARM_Page_Map(frame_metadata->frame_cap, user_process->vspace, vaddr, rights, attr);
+    err = seL4_ARM_Page_Map(frame_metadata->frame_cap, user_process->vspace, vaddr, rights, attr);
     if (err != seL4_NoError) {
         ZF_LOGE("Unable to perform page map. seL4_Error = %d", err);
-        return -1;
+        return err;
     }
+
     pt->frame_metadatas[pt_index] = frame_metadata;
-    return 0;
+    return seL4_NoError;
 }
 
 int sos_shadow_unmap_frame(uintptr_t vaddr, pgd_t *pgd, cspace_t *cspace) {

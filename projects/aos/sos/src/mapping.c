@@ -148,7 +148,7 @@ seL4_Error allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t 
     frame_ref_t frame = alloc_frame();
     if (frame == NULL_FRAME) {
         ZF_LOGE("Couldn't allocate additional frame");
-        return -1;
+        return seL4_NotEnoughMemory;
     }
 
     /* allocate a slot to duplicate the frame cap so we can map it into the application */
@@ -156,7 +156,7 @@ seL4_Error allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t 
     if (frame_cptr == seL4_CapNull) {
         free_frame(frame);
         ZF_LOGE("Failed to alloc slot for extra frame cap");
-        return -1;
+        return seL4_NotEnoughMemory;
     }
 
     /* copy the frame cap into the slot */
@@ -165,13 +165,13 @@ seL4_Error allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t 
         cspace_free_slot(cspace, frame_cptr);
         free_frame(frame);
         ZF_LOGE("Failed to copy cap, seL4_Error = %d\n", err);
-        return -1;
+        return err;
     }
 
     frame_metadata_t *frame_metadata = malloc(sizeof(frame_metadata_t));
     if (!frame_metadata) {
         ZF_LOGE("Failed to allocate memory for frame_metadata");
-        return -1;
+        return seL4_NotEnoughMemory;
     }
 
     frame_metadata->frame_ref = frame;
@@ -179,7 +179,7 @@ seL4_Error allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t 
 
     err = sos_map_frame(cspace, frame_metadata, vaddr,
                     seL4_AllRights, seL4_ARM_Default_VMAttributes, user_process);
-    if (err != 0) {
+    if (err != seL4_NoError) {
         // delete the cap and free the allocated slot
         cspace_delete(cspace, frame_cptr);
         cspace_free_slot(cspace, frame_cptr);
@@ -191,10 +191,10 @@ seL4_Error allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t 
         free(frame_metadata);
 
         ZF_LOGE("Unable to map extra frame for user app, seL4_Error = %d\n", err);
-        return -1;
+        return err;
     }
 
-    return 0;
+    return seL4_NoError;
 }
 
 seL4_Error map_frame_cspace(cspace_t *cspace, seL4_CPtr frame_cap, seL4_CPtr vspace, seL4_Word vaddr,
@@ -212,31 +212,6 @@ seL4_Error map_frame(cspace_t *cspace, seL4_CPtr frame_cap, seL4_CPtr vspace, se
                      seL4_CapRights_t rights, seL4_ARM_VMAttributes attr)
 {
     return map_frame_impl(cspace, frame_cap, vspace, vaddr, rights, attr, NULL, NULL);
-}
-
-int sos_map_frame(
-    cspace_t *cspace, 
-    frame_metadata_t *frame_metadata,
-    seL4_Word vaddr,
-    seL4_CapRights_t rights, 
-    seL4_ARM_VMAttributes attr, 
-    user_process_t *user_process
-)
-{
-    // does not map the first page of the virtual address space
-    // This prevents accidental usage of NULL 
-    if (vaddr < PAGE_SIZE_4K) {
-        ZF_LOGE("vaddr must not be within the first page of the virtual address space");
-        return -1;
-    }
-
-    int ret = sos_shadow_map_frame(vaddr, frame_metadata, cspace, user_process, rights, attr);
-    if (ret == -1) {
-        ZF_LOGE("Failed to shadow map frame");
-        return -1;
-    }
-
-    return 0;
 }
 
 static uintptr_t device_virt = SOS_DEVICE_START;
