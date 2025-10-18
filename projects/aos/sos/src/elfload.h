@@ -18,4 +18,4 @@
 #include "mapping.h"
 #include "user_process.h"
 
-int elf_load(cspace_t *cspace, seL4_CPtr loadee_vspace, elf_t *elf_file, user_process_t *user_process);
+int elf_load(cspace_t *cspace, elf_t *elf_file, user_process_t *user_process);
