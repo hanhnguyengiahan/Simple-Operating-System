@@ -8,7 +8,6 @@
 struct frame_metadata
 {
     frame_ref_t frame_ref;
-    seL4_Word vaddr;
     seL4_CPtr frame_cap;
 };
 typedef struct frame_metadata frame_metadata_t;
