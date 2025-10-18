@@ -46,6 +46,7 @@
 #include <utils/list.h>
 #include <sossharedapi/syscalls.h>
 #include "user_process.h"
+#include "pagetable.h"
 // #include "syscall_handlers/syscall_handlers.h"
 #ifdef CONFIG_SOS_GDB_ENABLED
 #include "debugger.h"
@@ -144,7 +145,7 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
             leaving (rem_bytes - max_bytes_to_send) bytes for the next iteration.
         */
         size_t bytes_to_send = MIN(rem_bytes, max_bytes_to_send);
-        size_t bytes_sent = network_console_send(network_console, &data[offset], bytes_to_send);
+        int bytes_sent = network_console_send(network_console, &data[offset], bytes_to_send);
         if (bytes_sent == -1) {
             ZF_LOGE("Failed to send %d bytes via network_console_send", bytes_to_send);
             seL4_SetMR(0, -1);
@@ -713,14 +714,6 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
         ZF_LOGE("Failed to alloc ipc buffer ut");
         return false;
     }
-
-    /* Initialise a linked list of paging objects */
-    user_process.paging_objects = malloc(sizeof(list_t));
-    if (!user_process.paging_objects) {
-        ZF_LOGE("Failed to alloc paging objects");
-        return false;
-    }
-    list_init(user_process.paging_objects);
 
     /* Initialise a linked list of frame refs */
     user_process.page_global_directory = create_pgd();
