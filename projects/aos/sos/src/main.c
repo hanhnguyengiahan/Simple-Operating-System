@@ -54,6 +54,7 @@
 #endif /* CONFIG_SOS_GDB_ENABLED */
 
 #include <aos/vsyscall.h>
+#include "backtrace.h"
 /*
  * To differentiate between signals from notification objects and and IPC messages,
  * we assign a badge to the notification object. The badge that we receive will
@@ -172,7 +173,6 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
     uintptr_t buf_vaddr = seL4_GetMR(2);
     size_t nbytes = seL4_GetMR(3);
     size_t remaining_bytes = nbytes;
-    
     while (remaining_bytes > 0) {
         if (SGLIB_QUEUE_IS_EMPTY(char, nwcs_buf, i, j)) {
             nwcs_reader = thread_index;
@@ -204,7 +204,7 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
                 seL4_SetMR(0, nbytes - remaining_bytes);
                 return;
             }
-        }        
+        }
     }
     nwcs_reader = -1;
     seL4_SetMR(0, nbytes);
