@@ -17,10 +17,10 @@
 #include "ut.h"
 #include "frame_table.h"
 #include "user_process.h"
+#include "vm_region.h"
 /* TODO: move these data structures to a file called bookkeeping for better clarity. */
 
 typedef struct frame_metadata frame_metadata_t;
-vm_region_t *add_vm_region(list_t *vm_regions, uintptr_t vaddr_base, size_t size, seL4_CapRights_t permission, bool grows_downward);
 /**
  * Maps a page.
  *
@@ -97,3 +97,5 @@ int sos_map_frame(cspace_t *cspace, frame_ref_t frame_ref, seL4_CPtr frame_cap, 
  * @return address that the device is mapped at.
  * */
 void *sos_map_device(cspace_t *cspace, uintptr_t addr, size_t size);
+
+int allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t *user_process, seL4_CapRights_t permission);

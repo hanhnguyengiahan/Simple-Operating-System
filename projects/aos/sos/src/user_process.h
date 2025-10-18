@@ -1,11 +1,9 @@
 #pragma once
 #include "ut.h"
+#include "vm_region.h"
 
 struct page_global_directory;
 typedef struct page_global_directory pgd_t;
-
-struct vm_region;
-typedef struct vm_region vm_region_t;
 
 struct user_process {
     ut_t *tcb_ut;

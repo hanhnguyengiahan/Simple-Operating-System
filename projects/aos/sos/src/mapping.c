@@ -128,6 +128,43 @@ static seL4_Error map_frame_impl(cspace_t *cspace, seL4_CPtr frame_cap, seL4_CPt
     return err;
 }
 
+int allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t *user_process, seL4_CapRights_t permission) {
+    frame_ref_t frame = alloc_frame();
+    if (frame == NULL_FRAME) {
+        ZF_LOGE("Couldn't allocate additional frame");
+        return -1;
+    }
+
+    /* allocate a slot to duplicate the frame cap so we can map it into the application */
+    seL4_CPtr frame_cptr = cspace_alloc_slot(cspace);
+    if (frame_cptr == seL4_CapNull) {
+        free_frame(frame);
+        ZF_LOGE("Failed to alloc slot for extra frame cap");
+        return -1;
+    }
+
+    /* copy the frame cap into the slot */
+    seL4_Error err = cspace_copy(cspace, frame_cptr, cspace, frame_page(frame), permission);
+    if (err != seL4_NoError) {
+        cspace_free_slot(cspace, frame_cptr);
+        free_frame(frame);
+        ZF_LOGE("Failed to copy cap, seL4_Error = %d\n", err);
+        return -1;
+    }
+
+    err = sos_map_frame(cspace, frame, frame_cptr, user_process->vspace, vaddr,
+                    seL4_AllRights, seL4_ARM_Default_VMAttributes, user_process);
+    if (err != 0) {
+        cspace_delete(cspace, frame_cptr);
+        cspace_free_slot(cspace, frame_cptr);
+        free_frame(frame);
+        ZF_LOGE("Unable to map extra frame for user app, seL4_Error = %d\n", err);
+        return -1;
+    }
+
+    return 0;
+}
+
 seL4_Error map_frame_cspace(cspace_t *cspace, seL4_CPtr frame_cap, seL4_CPtr vspace, seL4_Word vaddr,
                             seL4_CapRights_t rights, seL4_ARM_VMAttributes attr,
                             seL4_CPtr free_slots[MAPPING_SLOTS], seL4_Word *used)
@@ -175,20 +212,6 @@ int sos_map_frame(
     }
 
     return 0;
-}
-
-vm_region_t *add_vm_region(list_t *vm_regions, uintptr_t vaddr_base, size_t size, seL4_CapRights_t permission, bool grows_downward) {
-    vm_region_t *region = malloc(sizeof(vm_region_t));
-    if (region == NULL) {
-        // allocation failed
-        return NULL;
-    }
-    region->vaddr_base = vaddr_base;
-    region->size = size;
-    region->permission = permission;
-    region->grows_downward = grows_downward;
-    list_append(vm_regions, region);
-    return region;
 }
 
 static uintptr_t device_virt = SOS_DEVICE_START;
