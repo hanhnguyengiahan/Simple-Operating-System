@@ -14,6 +14,9 @@
         "debug.h": "c",
         "cspace.h": "c",
         "frame_table.h": "c",
-        "pagetable.h": "c"
+        "pagetable.h": "c",
+        "stringify.h": "c",
+        "elfload.h": "c",
+        "mapping.h": "c"
     }
 }
