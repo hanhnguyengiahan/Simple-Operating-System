@@ -52,20 +52,31 @@ int sos_open(const char *path, int flag)
     }   
 
     if (strcmp(path, "console") == 0) {
-        sos_fd_t *console = &sos_fd_table[CONSOLE_FD];
+        sos_fd_t *console = &vfs.sos_fd_table[CONSOLE_FD];
         if (console->is_opened) {
             if (HAS_FM_READ(console->mode) && HAS_FM_READ(mode)) {
                 return -1; // Only one reader at a time!
             }
         }
-
         console->is_opened = true;
         console->mode |= mode;
-
         return CONSOLE_FD;
     }
+
+    
+    int fd = find_next_fd();
+    
+    if (fd >= MAX_NUM_FILES) {
+        return -1;
+    }
+    
+    sos_fd_t *sos_fd = &vfs.sos_fd_table[fd];
+    sos_fd->is_opened = true;
+    sos_fd->path = path;
+    sos_fd->mode |= mode;
+
     // int result = nfs_open_async(nfs_context, path, flag, cb, private_data);
-    return -1;
+    return fd;
 }
 
 int sos_close(int file)
@@ -76,7 +87,7 @@ int sos_close(int file)
 
 int sos_read(int file, char *buf, size_t nbyte)
 {   
-    sos_fd_t *cur_file = &sos_fd_table[file];
+    sos_fd_t *cur_file = &vfs.sos_fd_table[file];
 
     // check invalid file
     if (file > MAX_NUM_FILES || !cur_file->is_opened || !HAS_FM_READ(cur_file->mode)) {
@@ -95,7 +106,7 @@ int sos_read(int file, char *buf, size_t nbyte)
 
 int sos_write(int file, const char *buf, size_t nbyte)
 {
-    sos_fd_t *cur_file = &sos_fd_table[file];
+    sos_fd_t *cur_file = &vfs.sos_fd_table[file];
 
     /* currently there's no a proper way to initialise the file status of files 
      * with descriptors 0, 1, 2 (stdin, stdout, stderr), so to enable printf, we only

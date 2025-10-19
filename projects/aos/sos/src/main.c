@@ -45,6 +45,7 @@
 #include <utils/sglib.h>
 #include <utils/list.h>
 #include <sossharedapi/syscalls.h>
+#include <sossharedapi/vfs.h>
 #include "user_process.h"
 #include "pagetable.h"
 #include "vm_region.h"
@@ -809,10 +810,12 @@ NORETURN void *main_continued(UNUSED void *arg)
     network_init(&cspace, timer_vaddr, ntfn);
     network_console = network_console_init();
 
-    // Initialize network console buffer
+    /* Initialize network console buffer */
     SGLIB_QUEUE_INIT(char, nwcs_buf, i, j);
     network_console_register_handler(network_console, write_to_buf);
 
+    /* Initialise the virtual file system */
+    vfs_init();
 
 #ifdef CONFIG_SOS_GDB_ENABLED
     /* Initialize the debugger */

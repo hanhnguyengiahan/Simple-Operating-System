@@ -29,10 +29,17 @@ typedef struct {
 } sos_stat_t;
 
 #define MAX_NUM_FILES 10
-struct sos_fd {
+typedef struct {
     fmode_t mode;
     bool is_opened;
-};
-typedef struct sos_fd sos_fd_t;
+    char *path;
+} sos_fd_t;
+
+typedef struct {
+    sos_fd_t sos_fd_table[MAX_NUM_FILES];
+} vfs_t;
+
 /* file descriptor number is used to index to the array */
-static sos_fd_t sos_fd_table[MAX_NUM_FILES];
+static vfs_t vfs;
+void vfs_init();
+int find_next_fd();
