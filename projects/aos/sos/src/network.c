@@ -40,8 +40,6 @@
 
 #include <ethernet/ethernet.h>
 
-#include <nfsc/libnfs.h>
-
 #include "vmem_layout.h"
 #include "dma.h"
 #include "mapping.h"
@@ -301,4 +299,8 @@ void nfs_mount_cb(int status, UNUSED struct nfs_context *nfs, void *data,
     }
 
     printf("Mounted nfs dir %s\n", nfs_dir_buf);
+}
+
+struct nfs_context* get_nfs_context() {
+    return nfs;
 }
