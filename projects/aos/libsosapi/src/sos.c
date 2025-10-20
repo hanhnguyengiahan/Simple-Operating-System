@@ -70,26 +70,24 @@ int sos_close(int file)
 
 int sos_read(int file, char *buf, size_t nbyte)
 {   
-    // sos_fd_t *cur_file = &vfs.sos_fd_table[file];
+    seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 4);
+    seL4_SetMR(0, SYSCALL_SOS_READ); 
+    seL4_SetMR(1, buf);
+    seL4_SetMR(2, nbyte);
+    seL4_SetMR(3, file);
 
-    // // check invalid file
-    // if (file > MAX_NUM_FILES || !cur_file->is_opened || !HAS_FM_READ(cur_file->mode)) {
-    //     return -1;
-    // }
-    // seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 4);
-    // seL4_SetMR(0, SYSCALL_SOS_READ); 
-    // seL4_SetMR(1, file);
-    // seL4_SetMR(2, buf);
-    // seL4_SetMR(3, nbyte);
-
-    // seL4_Call(SOS_IPC_EP_CAP, tag);
-    // seL4_Word num_byte_read = seL4_GetMR(0);
-    // return num_byte_read;
-    return -1;
+    seL4_Call(SOS_IPC_EP_CAP, tag);
+    
+    seL4_Word num_byte_read = seL4_GetMR(0);
+    return num_byte_read;
 }
 
 int sos_write(int file, const char *buf, size_t nbyte)
-{   
+{
+    if (file == 1) { /* stdin */
+        return sos_debug_print(buf, nbyte);        
+    }
+
     seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 4);
     seL4_SetMR(0, SYSCALL_SOS_WRITE); 
     seL4_SetMR(1, buf);

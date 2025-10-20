@@ -295,7 +295,7 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index) {
     
     uintptr_t buf_vaddr     = seL4_GetMR(1);
     size_t nbytes           = seL4_GetMR(2);
-    int file_desc           = seL4_GetMR(3);
+    size_t file_desc        = seL4_GetMR(3);
     
     char* temp_buf = malloc(nbytes);
     copy_from_user(temp_buf, (void*)buf_vaddr, nbytes);
@@ -328,6 +328,25 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index) {
     }
 }
 
+typedef struct {
+    size_t thread_index;
+    size_t bytes_read;
+    void *user_buf_vaddr;
+} nfs_read_cb_args_t;
+
+void nfs_read_cb(int status, struct nfs_context *nfs, void *data, void *private_data) {
+    if (status < 0) {
+        ZF_LOGE("nfs_read failed with error: %s\n", (char*)data);
+        return;
+    }
+
+    nfs_read_cb_args_t *args = private_data;
+    args->bytes_read = status;
+    copy_to_user(args->user_buf_vaddr, data, args->bytes_read);
+
+    seL4_Signal(worker_threads[args->thread_index]->ntfn);
+    return;
+}
 /*  nwcs_reader must be set to -1 before the function retunrs. 
     write_to_buf() will signal when nwcs_reader != -1, so not setting it back to -1
     will make write_to_buf() signals the syscall loop instead.
@@ -335,42 +354,52 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index) {
 void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
     ZF_LOGV("syscall: read!\n");
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
-   
-    uintptr_t buf_vaddr = seL4_GetMR(2);
-    size_t nbytes = seL4_GetMR(3);
-    size_t remaining_bytes = nbytes;
-    while (remaining_bytes > 0) {
-        if (SGLIB_QUEUE_IS_EMPTY(char, nwcs_buf, i, j)) {
-            nwcs_reader = thread_index;
-            seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
-        }
-        // find the frame data associated with this buf_vaddr
-        unsigned char *data = find_frame_data(buf_vaddr, user_process.page_global_directory);
-        if (!data) {
-            nwcs_reader = -1;
-            seL4_SetMR(0, nbytes - remaining_bytes);
-            break;
-        }
 
-        size_t offset = buf_vaddr % PAGE_SIZE_4K;
-        size_t num_bytes_to_write = MIN(remaining_bytes, PAGE_SIZE_4K - offset);
-        num_bytes_to_write = MIN(num_bytes_to_write, SGLIB_QUEUE_LENGTH(char, nwcs_buf, i, j, DIM));
+    uintptr_t buf_vaddr     = seL4_GetMR(1);
+    size_t nbytes           = seL4_GetMR(2);
+    size_t file_desc        = seL4_GetMR(3);
 
-        for (size_t index = 0; index < num_bytes_to_write; index++) {
-            char char_to_write = SGLIB_QUEUE_FIRST_ELEMENT(char, nwcs_buf, i, j);
-            data[offset + index] = char_to_write;
-            remaining_bytes -= 1;
-            buf_vaddr += 1;
-            SGLIB_QUEUE_DELETE_FIRST(char, nwcs_buf, i, j, DIM);
-            if (char_to_write == '\n') {
-                nwcs_reader = -1;
-                seL4_SetMR(0, nbytes - remaining_bytes);
-                return;
+    if (file_desc != CONSOLE_FD) { /* normal files */
+        struct nfs_context *nfs_context = get_nfs_context();
+
+        nfs_read_cb_args_t args = {.thread_index = thread_index, .user_buf_vaddr = buf_vaddr};
+        int ret = nfs_read_async(nfs_context, user_process.vfs->fd_table[file_desc].fh, nbytes,
+                        nfs_read_cb, (void*)&args);
+        if (ret < 0) {
+            ZF_LOGE("Failed to queue nfs_read_async");
+            seL4_SetMR(0, -1);
+            return;
+        }
+        seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
+
+        size_t bytes_read = args.bytes_read;
+        seL4_SetMR(0, bytes_read);
+        return;
+    } else {
+        char* temp_buf = malloc(nbytes);
+        size_t remaining_bytes = nbytes;
+        size_t bytes_read = 0;
+        while (remaining_bytes > 0) {
+            if (SGLIB_QUEUE_IS_EMPTY(char, nwcs_buf, i, j)) {
+                nwcs_reader = thread_index;
+                seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
             }
+
+            temp_buf[bytes_read] = SGLIB_QUEUE_FIRST_ELEMENT(char, nwcs_buf, i, j);
+            SGLIB_QUEUE_DELETE_FIRST(char, nwcs_buf, i, j, DIM);
+            if (temp_buf[bytes_read] == '\n') {
+                break;
+            }
+
+            remaining_bytes--;
+            bytes_read++;
         }
+        nwcs_reader = -1;
+        seL4_SetMR(0, bytes_read);
+
+        copy_to_user(buf_vaddr, temp_buf, nbytes);
+        return;
     }
-    nwcs_reader = -1;
-    seL4_SetMR(0, nbytes);
 }
 
 void handler_sos_timestamp(seL4_MessageInfo_t *reply_msg) {
