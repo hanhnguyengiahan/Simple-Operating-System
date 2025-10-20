@@ -119,11 +119,15 @@ struct network_console *network_console;
 #define MAX_WORKER_THREADS  1
 static sos_thread_t* worker_threads[MAX_WORKER_THREADS];
 
-/* Copy data from user app to SOS. Returns number of bytes that could not be copied. On success, this will be zero. */
+/* Copy data from user app to SOS. Returns number of bytes that could not be copied. On success, this will be zero. 
+    `nbyte` should include the null character.
+*/
 static size_t copy_from_user(void* to, const void* from, size_t nbyte) {
-    size_t rem_bytes = MIN(nbyte, strlen((const char*)from));
+    size_t rem_bytes = nbyte;
     size_t bytes_copied = 0;
     uintptr_t from_vaddr = (uintptr_t) from;
+    
+    char *temp = (char*) to;
     while (rem_bytes > 0) {
         frame_metadata_t *frame = find_frame(from_vaddr, user_process.page_global_directory);
         if (!frame) {
@@ -138,7 +142,7 @@ static size_t copy_from_user(void* to, const void* from, size_t nbyte) {
         size_t max_bytes_to_copy = PAGE_SIZE_4K - offset;
         size_t bytes_to_copy = MIN(rem_bytes, max_bytes_to_copy);
         
-        strncpy(&source_data[offset], &to[bytes_copied], bytes_to_copy);
+        strncpy(&temp[bytes_copied], &source_data[offset], bytes_to_copy);
 
         rem_bytes -= bytes_to_copy;
         from_vaddr += bytes_to_copy;
@@ -148,9 +152,11 @@ static size_t copy_from_user(void* to, const void* from, size_t nbyte) {
 }
 
 
-/* Copy data from SOS to user app. Returns number of bytes that could not be copied. On success, this will be zero. */
+/* Copy data from SOS to user app. Returns number of bytes that could not be copied. On success, this will be zero. 
+    `nbyte` should include the null character.
+*/
 static size_t copy_to_user(void* to, const void* from, size_t nbyte) {
-    size_t rem_bytes = MIN(nbyte, strlen((const char*)to));
+    size_t rem_bytes = nbyte;
     size_t bytes_copied = 0;
     uintptr_t to_vaddr = (uintptr_t) to;
     while (rem_bytes > 0) {
@@ -167,7 +173,8 @@ static size_t copy_to_user(void* to, const void* from, size_t nbyte) {
         size_t max_bytes_to_copy = PAGE_SIZE_4K - offset;
         size_t bytes_to_copy = MIN(rem_bytes, max_bytes_to_copy);
         
-        strncpy(&from[bytes_copied], &source_data[offset], bytes_to_copy);
+        char *temp = (char*) from;
+        strncpy(&source_data[offset], &temp[bytes_copied], bytes_to_copy);
 
         rem_bytes -= bytes_to_copy;
         to_vaddr += bytes_to_copy;
@@ -176,6 +183,10 @@ static size_t copy_to_user(void* to, const void* from, size_t nbyte) {
     return nbyte;
 }
 void sos_open_callback(int err, struct nfs_context *nfs, void *data, void *private_data) {
+    if (err < 0) {
+        ZF_LOGE("error: %d, error msg: %s\n", err, (char*)data);
+        return;
+    }
     struct callback_private_data *ret_private_data =  (struct callback_private_data *)private_data;
     
     int thread_index    = ret_private_data->thread_index;
@@ -193,6 +204,7 @@ int handler_sos_open_nwcs(fmode_t mode) {
             return -1; // Only one reader at a time!
         }
     }
+    console->path = "console";
     console->is_opened = true;
     console->mode |= mode;
     return CONSOLE_FD;
@@ -203,43 +215,58 @@ void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
 
     uintptr_t path_vaddr    = seL4_GetMR(1);
-    int flag                = seL4_GetMR(2);
-    fmode_t mode            = seL4_GetMR(3);
+    int path_len            = seL4_GetMR(2) + 1; // now includes null terminator
+    int flag                = seL4_GetMR(3);
+    fmode_t mode            = seL4_GetMR(4);
 
     unsigned char *path_data = find_frame_data(path_vaddr, user_process.page_global_directory);
     if (!path_data) {
         seL4_SetMR(0, -1);
         return;
     }
-    char *path = (char*)&path_data[path_vaddr % PAGE_SIZE_4K];
 
-    printf("found path: %s\n", path);
+    char *temp_path_buf = malloc(path_len);
+    size_t nbyte = copy_from_user(temp_path_buf, path_vaddr, path_len);
+    printf("temp_path_buf: %s\n", temp_path_buf);
 
-    if (strcmp(path, "console") == 0) {
+    if (strcmp(temp_path_buf, "console") == 0) {
         seL4_SetMR(0, handler_sos_open_nwcs(mode));
+        free(temp_path_buf);
+        return;
+    }
+
+    int fd = find_next_fd(user_process.vfs);
+
+    if (fd >= PROCESS_MAX_FILES) {
+        seL4_SetMR(0, -1);
+        free(temp_path_buf);
+        ZF_LOGE("Unable to allocate a new file descriptor since the number of open files exceeded %d\n", PROCESS_MAX_FILES);
         return;
     }
 
     struct nfs_context *nfs_context = get_nfs_context();
     struct callback_private_data *private_data = malloc(sizeof(struct callback_private_data));
     private_data->thread_index  = thread_index;
-    private_data->fd            = find_next_fd(user_process.vfs);
+    private_data->fd            = fd;
 
-    if (private_data->fd >= MAX_NUM_FILES) {
-        seL4_SetMR(0, -1);
-        ZF_LOGE("Unable to allocate a new file descriptor since the number of open files exceeded %d\n", MAX_NUM_FILES);
-        return;
-    }
-
-    int err = nfs_open_async(nfs_context, path, flag, sos_open_callback, private_data);
+    int err = nfs_open_async(nfs_context, temp_path_buf, flag | O_CREAT, sos_open_callback, private_data);
 
     if (err) {
         seL4_SetMR(0, -1);
+        ZF_LOGE("An error occured when trying to queue the command nfs_open_async. The callback will not be invoked.");
+        free(temp_path_buf);
+        free(private_data);
         return;
     }
 
     seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
+
+    user_process.vfs->fd_table[fd].is_opened = true;
+    user_process.vfs->fd_table[fd].mode = mode;
+    user_process.vfs->fd_table[fd].path = temp_path_buf;
     seL4_SetMR(0, private_data->fd);
+
+    free(private_data);
 }
 
 void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
