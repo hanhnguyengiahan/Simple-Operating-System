@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <string.h>
+#include <errno.h>
 
 #include <cspace/cspace.h>
 #include <aos/sel4_zf_logif.h>
@@ -48,6 +49,8 @@
 #include "user_process.h"
 #include "pagetable.h"
 #include "vm_region.h"
+#include <nfsc/libnfs.h>
+#include "fcntl.h"
 // #include "syscall_handlers/syscall_handlers.h"
 #ifdef CONFIG_SOS_GDB_ENABLED
 #include "debugger.h"
@@ -55,6 +58,8 @@
 
 #include <aos/vsyscall.h>
 #include "backtrace.h"
+#include <nfsc/libnfs.h>
+
 /*
  * To differentiate between signals from notification objects and and IPC messages,
  * we assign a badge to the notification object. The badge that we receive will
@@ -104,15 +109,164 @@ struct syscall_loop_args {
     int thread_index;
 };
 
+struct callback_private_data {
+    int thread_index;
+    int fd;
+};
+
 struct network_console *network_console;
 
 #define MAX_WORKER_THREADS  1
 static sos_thread_t* worker_threads[MAX_WORKER_THREADS];
 
-/* Callback for timer registered by sleep system call */
-void timeout_callback(uint32_t id, void *data) {
-    int thread_index = *(int*)data;
+/* Copy data from user app to SOS. Returns number of bytes that could not be copied. On success, this will be zero. 
+    `nbyte` should include the null character.
+*/
+static size_t copy_from_user(void* to, const void* from, size_t nbyte) {
+    size_t rem_bytes = nbyte;
+    size_t bytes_copied = 0;
+    uintptr_t from_vaddr = (uintptr_t) from;
+    
+    char *temp = (char*) to;
+    while (rem_bytes > 0) {
+        frame_metadata_t *frame = find_frame(from_vaddr, user_process.page_global_directory);
+        if (!frame) {
+            ZF_LOGE("Unable to find a frame for buf_vaddr at %p", from_vaddr);
+            return nbyte - bytes_copied;
+        }
+
+        // source data of the "from" buf
+        unsigned char* source_data = frame_data(frame->frame_ref);
+
+        size_t offset = from_vaddr % PAGE_SIZE_4K;
+        size_t max_bytes_to_copy = PAGE_SIZE_4K - offset;
+        size_t bytes_to_copy = MIN(rem_bytes, max_bytes_to_copy);
+        
+        strncpy(&temp[bytes_copied], &source_data[offset], bytes_to_copy);
+
+        rem_bytes -= bytes_to_copy;
+        from_vaddr += bytes_to_copy;
+        bytes_copied += bytes_to_copy;
+    }
+    return nbyte;
+}
+
+
+/* Copy data from SOS to user app. Returns number of bytes that could not be copied. On success, this will be zero. 
+    `nbyte` should include the null character.
+*/
+static size_t copy_to_user(void* to, const void* from, size_t nbyte) {
+    size_t rem_bytes = nbyte;
+    size_t bytes_copied = 0;
+    uintptr_t to_vaddr = (uintptr_t) to;
+    while (rem_bytes > 0) {
+        frame_metadata_t *frame = find_frame(to_vaddr, user_process.page_global_directory);
+        if (!frame) {
+            ZF_LOGE("Unable to find a frame for buf_vaddr at %p", to_vaddr);
+            return nbyte - bytes_copied;
+        }
+        
+        // source data of the "to" buf
+        unsigned char* source_data = frame_data(frame->frame_ref);
+
+        size_t offset = to_vaddr % PAGE_SIZE_4K;
+        size_t max_bytes_to_copy = PAGE_SIZE_4K - offset;
+        size_t bytes_to_copy = MIN(rem_bytes, max_bytes_to_copy);
+        
+        char *temp = (char*) from;
+        strncpy(&source_data[offset], &temp[bytes_copied], bytes_to_copy);
+
+        rem_bytes -= bytes_to_copy;
+        to_vaddr += bytes_to_copy;
+        bytes_copied += bytes_to_copy;
+    }
+    return nbyte;
+}
+void sos_open_callback(int err, struct nfs_context *nfs, void *data, void *private_data) {
+    if (err < 0) {
+        ZF_LOGE("error: %d, error msg: %s\n", err, (char*)data);
+        return;
+    }
+    struct callback_private_data *ret_private_data =  (struct callback_private_data *)private_data;
+    
+    int thread_index    = ret_private_data->thread_index;
+    int fd              = ret_private_data->fd;
+    struct nfsfh *nfsfh = (struct nfsfh *)data;
+
+    user_process.vfs->fd_table[fd].fh = nfsfh;
     seL4_Signal(worker_threads[thread_index]->ntfn);
+}
+
+int handler_sos_open_nwcs(fmode_t mode) {
+    sos_fd_t *console = &user_process.vfs->fd_table[CONSOLE_FD];
+    if (console->is_opened) {
+        if (HAS_FM_READ(console->mode) && HAS_FM_READ(mode)) {
+            return -1; // Only one reader at a time!
+        }
+    }
+    console->path = "console";
+    console->is_opened = true;
+    console->mode |= mode;
+    return CONSOLE_FD;
+}
+
+void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
+    ZF_LOGE("syscall: open!\n");
+    *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
+
+    uintptr_t path_vaddr    = seL4_GetMR(1);
+    int path_len            = seL4_GetMR(2) + 1; // now includes null terminator
+    int flag                = seL4_GetMR(3);
+    fmode_t mode            = seL4_GetMR(4);
+
+    unsigned char *path_data = find_frame_data(path_vaddr, user_process.page_global_directory);
+    if (!path_data) {
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    char *temp_path_buf = malloc(path_len);
+    size_t nbyte = copy_from_user(temp_path_buf, path_vaddr, path_len);
+    printf("temp_path_buf: %s\n", temp_path_buf);
+
+    if (strcmp(temp_path_buf, "console") == 0) {
+        free(temp_path_buf);
+        seL4_SetMR(0, handler_sos_open_nwcs(mode));
+        return;
+    }
+
+    int fd = find_next_fd(user_process.vfs);
+
+    if (fd >= PROCESS_MAX_FILES) {
+        ZF_LOGE("Unable to allocate a new file descriptor since the number of open files exceeded %d\n", PROCESS_MAX_FILES);
+        free(temp_path_buf);
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    struct nfs_context *nfs_context = get_nfs_context();
+    struct callback_private_data *private_data = malloc(sizeof(struct callback_private_data));
+    private_data->thread_index  = thread_index;
+    private_data->fd            = fd;
+
+    int err = nfs_open_async(nfs_context, temp_path_buf, flag | O_CREAT, sos_open_callback, private_data);
+
+    if (err) {
+        ZF_LOGE("An error occured when trying to queue the command nfs_open_async. The callback will not be invoked.");
+        free(temp_path_buf);
+        free(private_data);
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
+
+    user_process.vfs->fd_table[fd].is_opened = true;
+    user_process.vfs->fd_table[fd].mode = mode;
+    user_process.vfs->fd_table[fd].path = temp_path_buf;
+    
+    free(private_data);
+    seL4_SetMR(0, fd);
 }
 
 void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
@@ -126,16 +280,11 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
     
     size_t rem_bytes = nbytes;
     while (rem_bytes > 0) {
-        frame_metadata_t *frame = find_frame(buf_vaddr, user_process.page_global_directory);
-        if (!frame) {
-            ZF_LOGE("Unable to find a frame for buf_vaddr at %p", (void*)buf_vaddr);
+        unsigned char *data = find_frame_data(buf_vaddr, user_process.page_global_directory);
+        if (!data) {
             seL4_SetMR(0, -1);
             return;
         }
-       
-        unsigned char* data = frame_data(frame->frame_ref);
-        size_t offset = buf_vaddr % PAGE_SIZE_4K;
-        size_t max_bytes_to_send = PAGE_SIZE_4K - offset;
 
         /*  [  offset  ][  max_bytes_to_send  ]
             [          4096 bytes             ]
@@ -146,6 +295,8 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg) {
             Otherwise, we send max_bytes_to_send only, 
             leaving (rem_bytes - max_bytes_to_send) bytes for the next iteration.
         */
+        size_t offset = buf_vaddr % PAGE_SIZE_4K;
+        size_t max_bytes_to_send = PAGE_SIZE_4K - offset;
         size_t bytes_to_send = MIN(rem_bytes, max_bytes_to_send);
         int bytes_sent = network_console_send(network_console, (char*)&data[offset], bytes_to_send);
         if (bytes_sent == -1) {
@@ -178,21 +329,18 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
             nwcs_reader = thread_index;
             seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
         }
-        // find the frame associated with this buf_vaddr
-        frame_metadata_t *frame = find_frame(buf_vaddr, user_process.page_global_directory);
-        if (!frame) {
-            ZF_LOGE("page not found for buf_vaddr=%p\n", (void*)buf_vaddr);
+        // find the frame data associated with this buf_vaddr
+        unsigned char *data = find_frame_data(buf_vaddr, user_process.page_global_directory);
+        if (!data) {
             nwcs_reader = -1;
             seL4_SetMR(0, nbytes - remaining_bytes);
             break;
         }
-        size_t offset = buf_vaddr % PAGE_SIZE_4K;
 
-        // write the character to the frame
+        size_t offset = buf_vaddr % PAGE_SIZE_4K;
         size_t num_bytes_to_write = MIN(remaining_bytes, PAGE_SIZE_4K - offset);
         num_bytes_to_write = MIN(num_bytes_to_write, SGLIB_QUEUE_LENGTH(char, nwcs_buf, i, j, DIM));
 
-        unsigned char* data = frame_data(frame->frame_ref);
         for (size_t index = 0; index < num_bytes_to_write; index++) {
             char char_to_write = SGLIB_QUEUE_FIRST_ELEMENT(char, nwcs_buf, i, j);
             data[offset + index] = char_to_write;
@@ -214,6 +362,12 @@ void handler_sos_timestamp(seL4_MessageInfo_t *reply_msg) {
     ZF_LOGV("syscall: get timestamp!\n");
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
     seL4_SetMR(0, get_time());
+}
+
+/* Callback for timer registered by usleep system call */
+void timeout_callback(uint32_t id, void *data) {
+    int thread_index = *(int*)data;
+    seL4_Signal(worker_threads[thread_index]->ntfn);
 }
 
 void handler_sos_usleep(seL4_MessageInfo_t *reply_msg, int thread_index) {
@@ -282,6 +436,68 @@ void handler_sos_brk(seL4_MessageInfo_t *reply_msg) {
     seL4_SetMR(0, new_brk);
     return;
 }
+
+typedef struct nfs_opendir_cb_args {
+    int thread_index;
+} nfs_opendir_cb_args_t;
+
+void nfs_opendir_cb(int status, struct nfs_context *nfs, void *data, void *private_data) {
+    if (status < 0) {
+        user_process.curr_dir = NULL;
+        ZF_LOGE("opendir failed with error: %s\n", (char*)data);
+        return;
+    }
+
+    user_process.curr_dir = (struct nfsdir*) data;
+    
+    int thread_index = ((nfs_opendir_cb_args_t*)private_data)->thread_index;
+    seL4_Signal(worker_threads[thread_index]->ntfn);
+    
+    return;
+}
+
+void handler_sos_getdirent(seL4_MessageInfo_t *reply_msg, int thread_index) {
+    ZF_LOGV("syscall: getdirent!\n");
+    *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
+   
+    size_t pos = seL4_GetMR(2);
+    uintptr_t buf_vaddr = seL4_GetMR(3);
+    size_t nbyte = seL4_GetMR(4);
+
+    struct nfs_context* nfs_context = get_nfs_context();
+    
+    // calls opendir to get struct nfsdir*
+    nfs_opendir_cb_args_t args = {.thread_index = thread_index};
+    int ret = nfs_opendir_async(nfs_context, "./", nfs_opendir_cb, (void*) &args);
+    if (ret < 0) {
+        ZF_LOGE("Failed to queue nfs_opendir_async");
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
+
+    // calls nfs_readdir to read the expected entry (struct dirent*)
+    struct nfsdirent *nfsdirent;
+    for (size_t i = 0; i <= pos; ++i) {
+        nfsdirent = nfs_readdir(nfs_context, user_process.curr_dir);
+        if (nfsdirent == NULL) {
+            if (i == pos) { // pos is right after the last entry
+                seL4_SetMR(0, 0);
+                return;
+            } else { // otherwise, treat this as non-existent entry 
+                seL4_SetMR(0, -1);
+                return;
+            }
+        }
+    }
+    // gets the name field, and copy it to the name buf
+    size_t rem_bytes = copy_to_user((void*) buf_vaddr, (void*)nfsdirent->name, nbyte);
+
+    seL4_SetMR(0, nbyte - rem_bytes);
+    return;
+}
+
 /**
  * Deals with a syscall and sets the message registers before returning the
  * message info to be passed through to seL4_ReplyRecv()
@@ -300,6 +516,9 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
     /* Process system call */
     /* Ideally, put all of these into syscall_handlers.c (in the future :P)*/
     switch (syscall_number) {
+    case SYSCALL_SOS_OPEN:
+        handler_sos_open(&reply_msg, thread_index);
+        break;
     case SYSCALL_SOS_WRITE:
         handler_sos_write(&reply_msg);
         break;
@@ -314,6 +533,9 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
         break;
     case SYSCALL_SOS_BRK:
         handler_sos_brk(&reply_msg);
+        break;
+    case SYSCALL_SOS_GETDIRENT:
+        handler_sos_getdirent(&reply_msg, thread_index);
         break;
     default:
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
@@ -571,6 +793,10 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
         ZF_LOGE("Failed to create cspace");
         return false;
     }
+    
+    /* Initialise the virtual file system */
+    user_process.vfs = malloc(sizeof(vfs_t));
+    vfs_init(user_process.vfs);
 
     /* Initialise a linked list of frame refs */
     user_process.page_global_directory = create_pgd();
@@ -809,10 +1035,9 @@ NORETURN void *main_continued(UNUSED void *arg)
     network_init(&cspace, timer_vaddr, ntfn);
     network_console = network_console_init();
 
-    // Initialize network console buffer
+    /* Initialize network console buffer */
     SGLIB_QUEUE_INIT(char, nwcs_buf, i, j);
     network_console_register_handler(network_console, write_to_buf);
-
 
 #ifdef CONFIG_SOS_GDB_ENABLED
     /* Initialize the debugger */
