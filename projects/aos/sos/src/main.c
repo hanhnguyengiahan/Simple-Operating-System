@@ -230,17 +230,17 @@ void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
     printf("temp_path_buf: %s\n", temp_path_buf);
 
     if (strcmp(temp_path_buf, "console") == 0) {
-        seL4_SetMR(0, handler_sos_open_nwcs(mode));
         free(temp_path_buf);
+        seL4_SetMR(0, handler_sos_open_nwcs(mode));
         return;
     }
 
     int fd = find_next_fd(user_process.vfs);
 
-    if (fd >= MAX_NUM_FILES) {
-        seL4_SetMR(0, -1);
+    if (fd >= PROCESS_MAX_FILES) {
+        ZF_LOGE("Unable to allocate a new file descriptor since the number of open files exceeded %d\n", PROCESS_MAX_FILES);
         free(temp_path_buf);
-        ZF_LOGE("Unable to allocate a new file descriptor since the number of open files exceeded %d\n", MAX_NUM_FILES);
+        seL4_SetMR(0, -1);
         return;
     }
 
@@ -252,10 +252,10 @@ void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
     int err = nfs_open_async(nfs_context, temp_path_buf, flag | O_CREAT, sos_open_callback, private_data);
 
     if (err) {
-        seL4_SetMR(0, -1);
         ZF_LOGE("An error occured when trying to queue the command nfs_open_async. The callback will not be invoked.");
         free(temp_path_buf);
         free(private_data);
+        seL4_SetMR(0, -1);
         return;
     }
 
@@ -264,9 +264,9 @@ void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
     user_process.vfs->fd_table[fd].is_opened = true;
     user_process.vfs->fd_table[fd].mode = mode;
     user_process.vfs->fd_table[fd].path = temp_path_buf;
-    seL4_SetMR(0, private_data->fd);
-
+    
     free(private_data);
+    seL4_SetMR(0, fd);
 }
 
 typedef struct {
