@@ -8,3 +8,4 @@
 #define SYSCALL_SOS_USLEEP      4
 #define SYSCALL_SOS_BRK         5
 #define SYSCALL_SOS_GETDIRENT   6
+#define SYSCALL_SOS_STAT        7
