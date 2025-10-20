@@ -6,3 +6,4 @@
 #define SYSCALL_SOS_TIMESTAMP   3
 #define SYSCALL_SOS_USLEEP      4
 #define SYSCALL_SOS_BRK         5
+#define SYSCALL_SOS_GETDIRENT   6

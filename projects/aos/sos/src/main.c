@@ -56,6 +56,8 @@
 
 #include <aos/vsyscall.h>
 #include "backtrace.h"
+#include <nfsc/libnfs.h>
+
 /*
  * To differentiate between signals from notification objects and and IPC messages,
  * we assign a badge to the notification object. The badge that we receive will
@@ -283,6 +285,90 @@ void handler_sos_brk(seL4_MessageInfo_t *reply_msg) {
     seL4_SetMR(0, new_brk);
     return;
 }
+
+typedef struct nfs_opendir_cb_args {
+    int thread_index;
+} nfs_opendir_cb_args_t;
+
+void nfs_opendir_cb(int status, struct nfs_context *nfs, void *data, void *private_data) {
+    if (status < 0) {
+        user_process.curr_dir = NULL;
+        ZF_LOGE("opendir failed with error: %s\n", (char*)data);
+        return;
+    }
+
+    user_process.curr_dir = (struct nfsdir*) data;
+    
+    int thread_index = ((nfs_opendir_cb_args_t*)private_data)->thread_index;
+    seL4_Signal(worker_threads[thread_index]->ntfn);
+    
+    return;
+}
+
+void handler_sos_getdirent(seL4_MessageInfo_t *reply_msg, int thread_index) {
+    ZF_LOGV("syscall: getdirent!\n");
+    *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
+   
+    int pos = seL4_GetMR(2);
+    uintptr_t buf_vaddr = seL4_GetMR(3);
+    size_t nbyte = seL4_GetMR(4);
+
+    struct nfs_context* nfs_context = get_nfs_context();
+    
+    // calls opendir to get struct nfsdir*
+    nfs_opendir_cb_args_t args = {.thread_index = thread_index};
+    int ret = nfs_opendir_async(nfs_context, "./", nfs_opendir_cb, (void*) &args);
+    if (ret < 0) {
+        ZF_LOGE("Failed to queue nfs_opendir_async");
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
+
+    // calls nfs_readdir to read the expected entry (struct dirent*)
+    struct nfsdirent *nfsdirent;
+    for (size_t i = 0; i <= pos; ++i) {
+        nfsdirent = nfs_readdir(nfs_context, user_process.curr_dir);
+        if (nfsdirent == NULL) {
+            if (i == pos) { // pos is right after the last entry
+                seL4_SetMR(0, 0);
+                return;
+            } else { // otherwise, treat this as non-existent entry 
+                seL4_SetMR(0, -1);
+                return;
+            }
+        }
+    }
+
+    // gets the name field, and copy it to the name buf
+    char *file_name = nfsdirent->name;
+
+    size_t rem_bytes = MIN(nbyte, strlen(file_name));
+    size_t bytes_copied = 0;
+    while (rem_bytes > 0) {
+        frame_metadata_t *frame = find_frame(buf_vaddr, user_process.page_global_directory);
+        if (!frame) {
+            ZF_LOGE("Unable to find a frame for buf_vaddr at %p", (void*)buf_vaddr);
+            seL4_SetMR(0, -1);
+            return;
+        }
+        unsigned char* data = frame_data(frame->frame_ref);
+
+        size_t offset = buf_vaddr % PAGE_SIZE_4K;
+        size_t max_bytes_to_copy = PAGE_SIZE_4K - offset;
+        size_t bytes_to_copy = MIN(rem_bytes, max_bytes_to_copy);
+        
+        strncpy(data, &file_name[bytes_copied], bytes_to_copy);
+
+        rem_bytes -= bytes_to_copy;
+        buf_vaddr += bytes_to_copy;
+        bytes_copied += bytes_to_copy;
+    }
+
+    return bytes_copied;
+}
+
 /**
  * Deals with a syscall and sets the message registers before returning the
  * message info to be passed through to seL4_ReplyRecv()
@@ -315,6 +401,9 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
         break;
     case SYSCALL_SOS_BRK:
         handler_sos_brk(&reply_msg);
+        break;
+    case SYSCALL_SOS_GETDIRENT:
+        handler_sos_getdirent(&reply_msg, thread_index);
         break;
     default:
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
