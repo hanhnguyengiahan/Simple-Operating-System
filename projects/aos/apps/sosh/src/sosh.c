@@ -139,11 +139,12 @@ void test_2_pages_buffer(int console_fd) {
 }
 int main(void) {
     // printf("SOSH Starting!!\n");
+    sleep(2); // waits a bit until mounting is done
     int fd;
-    fd = sos_open("raw.txt", O_RDONLY);
+    fd = sos_open("raw.txt", O_RDWR);
     assert(fd == 4);
-    fd = sos_open("console", O_WRONLY);
-    assert(fd == CONSOLE_FD);
+    // fd = sos_open("console", O_RDWR);
+    // assert(fd == CONSOLE_FD);
     // test_buffers(fd);
     // test_2_pages_buffer(console_fd);
     while(1);
