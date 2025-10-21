@@ -141,7 +141,7 @@ static size_t copy_from_user(void* to, const void* from, size_t nbyte) {
         size_t max_bytes_to_copy = PAGE_SIZE_4K - offset;
         size_t bytes_to_copy = MIN(rem_bytes, max_bytes_to_copy);
         
-        strncpy(&temp[bytes_copied], &source_data[offset], bytes_to_copy);
+        memcpy(&temp[bytes_copied], &source_data[offset], bytes_to_copy);
 
         rem_bytes -= bytes_to_copy;
         from_vaddr += bytes_to_copy;
@@ -172,7 +172,7 @@ static size_t copy_to_user(void* to, const void* from, size_t nbyte) {
         size_t bytes_to_copy = MIN(rem_bytes, max_bytes_to_copy);
         
         char *temp = (char*) from;
-        strncpy(&source_data[offset], &temp[bytes_copied], bytes_to_copy);
+        memcpy(&source_data[offset], &temp[bytes_copied], bytes_to_copy);
 
         rem_bytes -= bytes_to_copy;
         to_vaddr += bytes_to_copy;
@@ -414,8 +414,6 @@ void nfs_read_cb(int status, struct nfs_context *nfs, void *data, void *private_
     nfs_read_cb_args_t *args = private_data;
     
     args->bytes_read = copy_to_user(args->user_buf_vaddr, data, status);
-    printf("copied bytes: %lu\n", args->bytes_read);
-    printf("bytes read from nfs_read: %lu\n", status);
 
     seL4_Signal(worker_threads[args->thread_index]->ntfn);
     return;
@@ -451,7 +449,6 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
         seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
 
         size_t bytes_read = args.bytes_read;
-        printf("bytes read: %d\n", bytes_read);
         seL4_SetMR(0, bytes_read);
         return;
     } else {
@@ -1100,7 +1097,6 @@ void init_muslc(void)
     muslcsys_install_syscall(__NR_exit_group, sys_exit_group);
     muslcsys_install_syscall(__NR_ioctl, sys_ioctl);
     muslcsys_install_syscall(__NR_mmap, sys_mmap);
-    muslcsys_install_syscall(__NR_munmap, sys_munmap);
     muslcsys_install_syscall(__NR_brk,  sys_brk);
     muslcsys_install_syscall(__NR_clock_gettime, sys_clock_gettime);
     muslcsys_install_syscall(__NR_nanosleep, sys_nanosleep);
