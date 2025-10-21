@@ -670,9 +670,9 @@ void handler_sos_getdirent(seL4_MessageInfo_t *reply_msg, int thread_index) {
     ZF_LOGV("syscall: getdirent!\n");
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
    
-    size_t pos = seL4_GetMR(2);
-    uintptr_t buf_vaddr = seL4_GetMR(3);
-    size_t nbyte = seL4_GetMR(4);
+    size_t pos = seL4_GetMR(1);
+    uintptr_t buf_vaddr = seL4_GetMR(2);
+    size_t nbyte = seL4_GetMR(3);
 
     struct nfs_context* nfs_context = get_nfs_context();
     
