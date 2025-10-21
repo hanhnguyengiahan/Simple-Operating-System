@@ -223,7 +223,19 @@ void sos_stat_callback(int err, struct nfs_context *nfs, void *data, void *priva
     struct nfs_stat_64 *nfs_stat = (struct nfs_stat_64 *)data;
     sos_stat_t *sos_stat = malloc(sizeof(sos_stat_t));
     sos_stat->st_type   = ret_private_data->st_type;
-    sos_stat->st_fmode  = nfs_stat->nfs_mode;
+    
+    
+    sos_stat->st_fmode  = 0;
+    if (nfs_stat->nfs_mode & S_IRUSR) {
+        sos_stat->st_fmode |= FM_READ;
+    }
+    if (nfs_stat->nfs_mode & S_IWUSR) {
+        sos_stat->st_fmode |= FM_WRITE;
+    }
+    if (nfs_stat->nfs_mode & S_IXUSR) {
+        sos_stat->st_fmode |= FM_EXEC;
+    }
+
     sos_stat->st_size   = nfs_stat->nfs_size;
     sos_stat->st_ctime  = nfs_stat->nfs_ctime;
     sos_stat->st_atime  = nfs_stat->nfs_atime;
@@ -292,9 +304,9 @@ void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
 
     uintptr_t path_vaddr    = seL4_GetMR(1);
     int path_len            = seL4_GetMR(2) + 1; // now includes null terminator
-    int flag                = seL4_GetMR(3);
-    fmode_t mode            = seL4_GetMR(4);
+    fmode_t mode            = seL4_GetMR(3);
 
+    printf("received mode: %d\n", mode);
     unsigned char *path_data = find_frame_data(path_vaddr, user_process.page_global_directory);
     if (!path_data) {
         seL4_SetMR(0, -1);
@@ -339,7 +351,7 @@ void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
     private_data->fd            = fd;
     private_data->err           = 0;
 
-    int err = nfs_open_async(nfs_context, temp_path_buf, flag | O_CREAT, sos_open_callback, private_data);
+    int err = nfs_open_async(nfs_context, temp_path_buf, mode | O_CREAT, sos_open_callback, private_data);
 
     if (err) {
         ZF_LOGE("An error occured when trying to queue the command nfs_open_async. The callback will not be invoked.");
@@ -449,6 +461,25 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index) {
     size_t nbytes           = seL4_GetMR(2);
     size_t file_desc        = seL4_GetMR(3);
     
+    if (file_desc < 0 || file_desc >= PROCESS_MAX_FILES) {
+        ZF_LOGE("File descriptor is invalid.");
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    if (!user_process.vfs->fd_table[file_desc].is_opened) {
+        ZF_LOGE("File is not open yet!");
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    if (user_process.vfs->fd_table[file_desc].mode != O_WRONLY && 
+        user_process.vfs->fd_table[file_desc].mode != O_RDWR) {
+        ZF_LOGE("File is not open to write!");
+        seL4_SetMR(0, -1);
+        return;
+    }
+
     char* temp_buf = malloc(nbytes);
     if (temp_buf == NULL) {
         ZF_LOGE("Failed to allocate memory for temp_buf");
