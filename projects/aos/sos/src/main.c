@@ -461,6 +461,25 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index) {
     size_t nbytes           = seL4_GetMR(2);
     size_t file_desc        = seL4_GetMR(3);
     
+    if (file_desc < 0 || file_desc >= PROCESS_MAX_FILES) {
+        ZF_LOGE("File descriptor is invalid.");
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    if (!user_process.vfs->fd_table[file_desc].is_opened) {
+        ZF_LOGE("File is not open yet!");
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    if (user_process.vfs->fd_table[file_desc].mode != O_WRONLY && 
+        user_process.vfs->fd_table[file_desc].mode != O_RDWR) {
+        ZF_LOGE("File is not open to write!");
+        seL4_SetMR(0, -1);
+        return;
+    }
+
     char* temp_buf = malloc(nbytes);
     if (temp_buf == NULL) {
         ZF_LOGE("Failed to allocate memory for temp_buf");

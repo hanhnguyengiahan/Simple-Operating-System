@@ -1,5 +1,6 @@
 #include <sossharedapi/vfs.h>
 #include <stdlib.h>
+#include <fcntl.h>
 
 void vfs_init(vfs_t *vfs) {
     for (int i = 0; i < PROCESS_MAX_FILES; i++) {
@@ -8,13 +9,21 @@ void vfs_init(vfs_t *vfs) {
         vfs->fd_table[i].mode = 0;
     }
 
-    // Optional: mark 0, 1, 2 as "open" for terminal device
+    // Optional: mark 0, 1, 2, 3 as "open" for terminal device
     vfs->fd_table[0].is_opened = true;
     vfs->fd_table[1].is_opened = true;
     vfs->fd_table[2].is_opened = true;
+    vfs->fd_table[3].is_opened = true;
+
     vfs->fd_table[0].path = "stdin";
     vfs->fd_table[1].path = "stdout";
     vfs->fd_table[2].path = "stderr";
+    vfs->fd_table[3].path = "console";
+
+    vfs->fd_table[0].mode |= O_RDWR;
+    vfs->fd_table[1].mode |= O_RDWR;
+    vfs->fd_table[2].mode |= O_RDWR;
+    vfs->fd_table[3].mode |= O_RDWR;
 }
 
 int find_next_fd(vfs_t *vfs) {
