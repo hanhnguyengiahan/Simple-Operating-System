@@ -32,31 +32,14 @@ static size_t sos_debug_print(const void *vData, size_t count)
 }
 
 // currently does not check for PROCESS_MAX_FILES opened
-int sos_open(const char *path, int flag)
+int sos_open(const char *path, fmode_t mode)
 {
-    fmode_t mode;
-    switch (flag)
-    {
-        case O_RDONLY:
-            mode = FM_READ;
-            break;
-        case O_WRONLY:
-            mode = FM_WRITE;
-            break;
-        case O_RDWR:
-            mode = FM_WRITE | FM_READ;
-            break;
-        default:
-            return -1;
-            break;
-    }   
-
-    seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 5);
+    
+    seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 4);
     seL4_SetMR(0, SYSCALL_SOS_OPEN);
     seL4_SetMR(1, path);
     seL4_SetMR(2, strlen(path));
-    seL4_SetMR(3, flag);
-    seL4_SetMR(4, mode);
+    seL4_SetMR(3, mode);
 
     seL4_Call(SOS_IPC_EP_CAP, tag);
    return seL4_GetMR(0);
@@ -170,7 +153,12 @@ int sos_stat(const char *path, sos_stat_t *buf)
     seL4_SetMR(2, strlen(path));
     seL4_SetMR(3, buf);
     seL4_Call(SOS_IPC_EP_CAP, tag);
-
+    printf("==================== SOS STAT USER =================\n");
+    printf("sos_stat type: %d\n", buf->st_type);
+    printf("sos_stat fmode: %d\n", buf->st_fmode);
+    printf("sos_stat size: %d\n", buf->st_size);
+    printf("sos_stat ctime: %d\n", buf->st_ctime);
+    printf("sos_stat atime: %d\n", buf->st_atime);
     return seL4_GetMR(0);
 }
 
