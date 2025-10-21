@@ -109,9 +109,17 @@ struct syscall_loop_args {
     int thread_index;
 };
 
-struct callback_private_data {
+struct sos_open_callback_private_data {
     int thread_index;
     int fd;
+    int err;
+};
+
+struct sos_stat_callback_private_data {
+    int thread_index;
+    uintptr_t stat_buf_vaddr;
+    st_type_t st_type;
+    int err;
 };
 
 struct network_console *network_console;
@@ -181,17 +189,46 @@ static size_t copy_to_user(void* to, const void* from, size_t nbyte) {
     return nbyte;
 }
 void sos_open_callback(int err, struct nfs_context *nfs, void *data, void *private_data) {
-    if (err < 0) {
-        ZF_LOGE("error: %d, error msg: %s\n", err, (char*)data);
-        return;
-    }
-    struct callback_private_data *ret_private_data =  (struct callback_private_data *)private_data;
-    
+    struct sos_open_callback_private_data *ret_private_data =  (struct sos_open_callback_private_data *)private_data;
+
     int thread_index    = ret_private_data->thread_index;
     int fd              = ret_private_data->fd;
-    struct nfsfh *nfsfh = (struct nfsfh *)data;
 
+    if (err < 0) {
+        ZF_LOGE("error: %d, error msg: %s\n", err, (char*)data);
+        ret_private_data->err = err;
+        seL4_Signal(worker_threads[thread_index]->ntfn);
+        return;
+    }
+    
+    struct nfsfh *nfsfh = (struct nfsfh *)data;
     user_process.vfs->fd_table[fd].fh = nfsfh;
+
+    seL4_Signal(worker_threads[thread_index]->ntfn);
+}
+
+void sos_stat_callback(int err, struct nfs_context *nfs, void *data, void *private_data) {
+    struct sos_stat_callback_private_data *ret_private_data =  (struct sos_stat_callback_private_data *)private_data;
+
+    int thread_index            = ret_private_data->thread_index;
+    uintptr_t stat_buf_vaddr    = ret_private_data->stat_buf_vaddr;
+
+    if (err < 0) {
+        ZF_LOGE("error: %d, error msg: %s\n", err, (char*)data);
+        ret_private_data->err = err;
+        seL4_Signal(worker_threads[thread_index]->ntfn);
+        return;
+    }
+   
+    struct nfs_stat_64 *nfs_stat = (struct nfs_stat_64 *)data;
+    sos_stat_t *sos_stat = malloc(sizeof(sos_stat_t));
+    sos_stat->st_type   = ret_private_data->st_type;
+    sos_stat->st_fmode  = nfs_stat->nfs_mode;
+    sos_stat->st_size   = nfs_stat->nfs_size;
+    sos_stat->st_ctime  = nfs_stat->nfs_ctime;
+    sos_stat->st_atime  = nfs_stat->nfs_atime;
+
+    copy_to_user((void *)stat_buf_vaddr, sos_stat, sizeof(sos_stat_t));
     seL4_Signal(worker_threads[thread_index]->ntfn);
 }
 
@@ -207,6 +244,47 @@ int handler_sos_open_nwcs(fmode_t mode) {
     console->mode |= mode;
     return CONSOLE_FD;
 }
+
+void handler_sos_stat(seL4_MessageInfo_t *reply_msg, int thread_index) {
+    ZF_LOGE("syscall: stat!\n");
+    *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
+
+    uintptr_t path_vaddr        = seL4_GetMR(1);
+    int path_len                = seL4_GetMR(2) + 1; // includes terminator
+    uintptr_t stat_buf_vaddr    = seL4_GetMR(3);
+
+    char *temp_path_buf = malloc(path_len);
+    size_t nbyte = copy_from_user(temp_path_buf, path_vaddr, path_len);
+
+    struct nfs_context *nfs_context = get_nfs_context();
+    struct sos_stat_callback_private_data *private_data = malloc(sizeof(struct sos_stat_callback_private_data));
+    private_data->thread_index      = thread_index;
+    private_data->stat_buf_vaddr    = stat_buf_vaddr;
+    private_data->st_type           = strcmp(temp_path_buf, "console") == 0 ? ST_SPECIAL : ST_FILE;
+    private_data->err               = 0;
+
+    int err = nfs_stat64_async(nfs_context, temp_path_buf, sos_stat_callback, private_data);
+    if (err < 0) {
+        ZF_LOGE("An error occured when trying to queue the command nfs_stat64_async. The callback will not be invoked.");
+        free(temp_path_buf);
+        free(private_data);
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
+
+    err = private_data->err;
+    
+    free(private_data);
+    free(temp_path_buf);
+
+    if (err) {
+        seL4_SetMR(0, -1);
+    } else {
+        seL4_SetMR(0, 0);
+    }
+}   
 
 void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
     ZF_LOGE("syscall: open!\n");
@@ -249,15 +327,17 @@ void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
     }
 
     struct nfs_context *nfs_context = get_nfs_context();
-    struct callback_private_data *private_data = malloc(sizeof(struct callback_private_data));
+    struct sos_open_callback_private_data *private_data = malloc(sizeof(struct sos_open_callback_private_data));
     if (private_data == NULL) {
         ZF_LOGE("Failed to allocate memory for nfs_open callback private_data");
         seL4_SetMR(0, -1);
         free(temp_path_buf);
         return;        
     }
+
     private_data->thread_index  = thread_index;
     private_data->fd            = fd;
+    private_data->err           = 0;
 
     int err = nfs_open_async(nfs_context, temp_path_buf, flag | O_CREAT, sos_open_callback, private_data);
 
@@ -270,12 +350,19 @@ void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
     }
 
     seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
+    err = private_data->err;
+    free(private_data);
+
+    if (err) {
+        free(temp_path_buf);
+        seL4_SetMR(0, -1);
+        return;
+    }
 
     user_process.vfs->fd_table[fd].is_opened = true;
     user_process.vfs->fd_table[fd].mode = mode;
     user_process.vfs->fd_table[fd].path = temp_path_buf;
-    
-    free(private_data);
+
     seL4_SetMR(0, fd);
 }
 
@@ -662,6 +749,9 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
         break;
     case SYSCALL_SOS_GETDIRENT:
         handler_sos_getdirent(&reply_msg, thread_index);
+        break;
+    case SYSCALL_SOS_STAT:
+        handler_sos_stat(&reply_msg, thread_index);
         break;
     default:
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
