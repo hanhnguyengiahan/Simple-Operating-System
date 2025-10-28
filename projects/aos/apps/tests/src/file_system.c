@@ -21,6 +21,47 @@ static sos_stat_t sbuf;
 int test_open_console() {
     fd = open("console", O_RDONLY);
     assert(fd == CONSOLE_FD);
+
+    close(CONSOLE_FD); // clean up the state for the next test
+}
+
+int test_open_console_with_two_readers() {
+    fd = open("console", O_RDONLY);
+    assert(fd == CONSOLE_FD);
+
+    fd = open("console", O_RDONLY);
+    assert(fd == -1);
+
+    fd = open("console", O_RDWR);
+    assert(fd == -1);
+    
+    close(CONSOLE_FD); // clean up the state for the next test
+}
+
+int test_open_console_with_multiple_writers() {
+    fd = open("console", O_WRONLY);
+    assert(fd == CONSOLE_FD);
+
+    fd = open("console", O_WRONLY);
+    assert(fd == CONSOLE_FD);
+
+    fd = open("console", O_WRONLY);
+    assert(fd == CONSOLE_FD);
+
+    fd = open("console", O_RDWR);
+    assert(fd == CONSOLE_FD);
+
+    close(CONSOLE_FD); // clean up the state for the next test
+}
+
+int test_open_console_with_read_and_write() {
+    fd = open("console", O_RDONLY);
+    assert(fd == CONSOLE_FD);
+
+    fd = open("console", O_WRONLY);
+    assert(fd == CONSOLE_FD);
+
+    close(CONSOLE_FD); // clean up the state for the next test
 }
 
 int test_open_non_existent_file() {
@@ -50,12 +91,17 @@ int test_read_file_opened_with_write_mode() {
     fd = open("file.txt", O_WRONLY);
     char buf[BUF_SIZE];
     int res = read(fd, buf, BUF_SIZE);
-    // assert(res == -1);
+    assert(res == -1);
 }
 
 int test_file_system() {
-    // open files
+    // open console
     test_open_console();
+    test_open_console_with_two_readers();
+    test_open_console_with_multiple_writers();
+    test_open_console_with_read_and_write();
+
+    // open normal files
     test_open_non_existent_file();
 
     // read from file
