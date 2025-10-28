@@ -38,6 +38,7 @@ int test_open_non_existent_file() {
     assert((sbuf.st_fmode & FM_EXEC) == 0);
 }
 
+//========================== READ ==========================
 int test_read_file_opened_with_read_mode() {
     fd = open("file.txt", O_RDONLY);
     char buf[BUF_SIZE];

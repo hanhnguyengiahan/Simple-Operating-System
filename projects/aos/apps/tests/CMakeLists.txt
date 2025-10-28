@@ -15,7 +15,7 @@ project(tests C)
 
 set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -u __vsyscall_ptr")
 
-add_executable(tests EXCLUDE_FROM_ALL src/tests.c src/file_system/file_system.c)
+add_executable(tests EXCLUDE_FROM_ALL src/tests.c src/file_system.c)
 target_include_directories(tests PRIVATE include)
 target_link_libraries(tests sel4runtime muslc sel4 sosapi utils)
 
