@@ -256,14 +256,29 @@ void sos_stat_callback(int err, struct nfs_context *nfs, void *data, void *priva
 
 int handler_sos_open_nwcs(fmode_t mode) {
     sos_fd_t *console = &user_process.vfs->fd_table[CONSOLE_FD];
-    if (console->is_opened) {
-        if (HAS_FM_READ(console->mode) && HAS_FM_READ(mode)) {
-            return -1; // Only one reader at a time!
-        }
+
+    if (!console->is_opened) {
+        console->mode = mode;
+        console->path = "console";
+        console->is_opened = true;
+        return CONSOLE_FD;
     }
+
+    bool has_reader = (console->mode == O_RDONLY || console->mode == O_RDWR);
+    ZF_LOGE("has reader: %d\n", has_reader);
+    switch (mode) {
+        case O_RDONLY:
+        case O_RDWR:
+            if (has_reader) return -1; // only allow one nwcs reader
+            console->mode = O_RDWR;
+            break;
+        case O_WRONLY:
+            console->mode = has_reader ? O_RDWR : O_WRONLY;
+            break;
+    }
+    
     console->path = "console";
     console->is_opened = true;
-    console->mode |= mode;
     return CONSOLE_FD;
 }
 
@@ -419,9 +434,23 @@ void handler_sos_close(seL4_MessageInfo_t *reply_msg, int thread_index) {
 
     size_t fd = seL4_GetMR(1);    
     
-    if (fd >= PROCESS_MAX_FILES || user_process.vfs->fd_table[fd].is_opened == false) {
+    if (fd < 0 || fd >= PROCESS_MAX_FILES) {
         ZF_LOGE("Invalid file descriptor");
         seL4_SetMR(0, -1);
+        return;
+    }
+
+    if (user_process.vfs->fd_table[fd].is_opened == false) {
+        ZF_LOGE("File is not opened");
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    if (fd == CONSOLE_FD) {
+        user_process.vfs->fd_table[fd].is_opened = false;
+        user_process.vfs->fd_table[fd].mode = -1;
+        free(user_process.vfs->fd_table[fd].path);
+        seL4_SetMR(0, 0);
         return;
     }
 
@@ -443,8 +472,8 @@ void handler_sos_close(seL4_MessageInfo_t *reply_msg, int thread_index) {
 
     // Mark fd slot as free. Don't need to free (struct nfsfh*) because it has been freed in nfs_close_async.
     user_process.vfs->fd_table[fd].is_opened = false;
+    user_process.vfs->fd_table[fd].mode = -1;
     free(user_process.vfs->fd_table[fd].path);
-
     seL4_SetMR(0, 0);
     return;
 }
@@ -591,6 +620,13 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
 
     if (!user_process.vfs->fd_table[file_desc].is_opened) {
         ZF_LOGE("File is not open yet!");
+        seL4_SetMR(0, -1);
+        return;
+    }
+
+    if (user_process.vfs->fd_table[file_desc].mode != O_RDONLY && 
+        user_process.vfs->fd_table[file_desc].mode != O_RDWR) {
+        ZF_LOGE("File %d is not open to read!", file_desc);
         seL4_SetMR(0, -1);
         return;
     }
