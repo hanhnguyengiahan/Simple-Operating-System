@@ -168,9 +168,11 @@ static size_t copy_to_user(void* to, const void* from, size_t nbyte) {
     while (rem_bytes > 0) {
         frame_metadata_t *frame = find_frame(to_vaddr, user_process.page_global_directory);
         if (!frame) {
+            ZF_LOGI("vaddr %p is not mapped to any frame, trying to allocate frame...", (void*)to_vaddr);
             vm_region_t *valid_region = find_valid_region(to_vaddr, BIT(6), user_process.vm_regions);
+
             if (valid_region == NULL) {
-                ZF_LOGE("Fault address %p resolves to an invalid region access", (void*)to_vaddr);
+                ZF_LOGE("vaddr %p resolves to an invalid region access", (void*)to_vaddr);
                 return 0;
             }
             
@@ -179,6 +181,8 @@ static size_t copy_to_user(void* to, const void* from, size_t nbyte) {
                 ZF_LOGE("Unable to allocate a new frame at %p!\n", (void*)to_vaddr);
                 return 0;
             }
+
+            ZF_LOGI("Successfully allocate a new frame at %p", (void*)to_vaddr);
             continue;
         }
 
@@ -1041,7 +1045,7 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
     cspace_free_slot(cspace, local_stack_cptr);
 
     /* Exend the stack with extra pages */
-    for (int page = 0; page < 10; page++) {
+    for (int page = 0; page < 10; page++) { // needs to make this a magic number, and rename the INITIAL_PROCESS_EXTRA_STACK_PAGES to sth else (or use it for this, and define a different name for the actual stack size)
         stack_bottom -= PAGE_SIZE_4K;
         int result = allocate_new_frame(cspace, stack_bottom, &user_process, seL4_ReadWrite);
         if (result != 0) {
