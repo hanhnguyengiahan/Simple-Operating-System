@@ -87,10 +87,10 @@ void *sos_map_device(cspace_t *cspace, uintptr_t addr, size_t size);
  * Any intermediate structures, frames, cptrs allocated are saved, so that they can be deleted in the future.
  *
  * @param cspace          CSpace which can be used to allocate slots for intermediate paging structures.
- * @param vspace          A capability to the vspace (seL4_ARM_PageGlobalDirectoryObject).
+ * @param vaddr           The virtual address to map the frame.
  * @param user_process    The user process that wants to map a frame.
- * @param permissions     The permissions of the mapping
+ * @param rights          The access rights for the mapping
  *
  * @return 0 on success
  */
-seL4_Error allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t *user_process, seL4_CapRights_t permission);
+seL4_Error allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t *user_process, seL4_CapRights_t rights);
