@@ -902,7 +902,7 @@ int handle_vm_fault(seL4_Fault_t fault) {
     // find the associated page of this faultaddr
     page_metadata_t *page = find_page(faultaddr, user_process.page_global_directory);
     if (page != NULL) {
-        if (page->offset != -1) {   /* page currently on disk */
+        if (page->pagefile_offset != -1) {   /* page currently on disk */
             return swap_to_mem(page);
         } else {                    /* page currently still in memory */
             return reference_page(page, user_process.vspace, faultaddr, valid_region->permission);

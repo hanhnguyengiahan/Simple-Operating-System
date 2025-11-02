@@ -29,7 +29,7 @@ int swap_to_mem(page_metadata_t *page) {
 
     // update reference bit and offset
     page->reference_bit = 1;
-    page->offset = -1;
+    page->pagefile_offset = -1;
     sglib_pages_queue_t_add(&in_memory_pages, page);
 }
 
