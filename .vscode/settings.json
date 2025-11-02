@@ -25,6 +25,7 @@
         "vmem_layout.h": "c",
         "user_process.h": "c",
         "page_swap.h": "c",
-        "util.h": "c"
+        "util.h": "c",
+        "vm_region.h": "c"
     }
 }
