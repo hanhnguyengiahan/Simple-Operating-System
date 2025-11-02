@@ -7,6 +7,7 @@
 #define PAGES_QUEUE_MAX_SIZE (1 << 19)
 #endif
 
+extern cspace_t cspace;
 
 typedef struct pages_queue
 {
@@ -35,7 +36,7 @@ int swap_to_mem(page_metadata_t *page) {
     return 0;
 }
 
-frame_t *evict_page(cspace_t *cspace) {
+frame_t *evict_page() {
     while (!sglib_pages_queue_t_is_empty(&in_memory_pages)) {
         page_metadata_t *page = sglib_pages_queue_t_first_element(&in_memory_pages);
         sglib_pages_queue_t_delete_first(&in_memory_pages);
@@ -54,7 +55,7 @@ frame_t *evict_page(cspace_t *cspace) {
             // write_page_to_disk(page);
 
             // unmap the page, delete its frame cap and slot
-            seL4_Error err = dealloc_unmap_frame(cspace, page);
+            seL4_Error err = dealloc_unmap_frame(&cspace, page);
             if (err != seL4_NoError) {
                 ZF_LOGE("Unable to deallocate and unmap the page, seL4_Error = %d\n", err);
                 return NULL;
