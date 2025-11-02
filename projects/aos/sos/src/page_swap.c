@@ -7,6 +7,22 @@
 #define PAGES_QUEUE_MAX_SIZE (1 << 19)
 #endif
 
+extern cspace_t *cspace;
+struct nfsfh *pagefile_fh; /* NFS file handle for pagefile */
+struct nfs_context *nfs;
+
+typedef struct nfs_open_cb_args {
+    seL4_CPtr ntfn;
+} nfs_open_cb_args_t;
+static void nfs_open_cb(int status, UNUSED struct nfs_context *nfs, void *data, UNUSED void *private_data);
+
+typedef struct nfs_pwrite_cb_args {
+    seL4_CPtr ntfn;
+    size_t bytes_written;
+} nfs_pwrite_cb_args_t;
+static void nfs_pwrite_cb(int status, UNUSED struct nfs_context *nfs, void *data, UNUSED void *private_data);
+
+
 extern cspace_t cspace;
 
 typedef struct pages_queue
@@ -76,4 +92,50 @@ seL4_Error reference_page(page_metadata_t *page, seL4_CPtr vspace, seL4_Word vad
         return CSPACE_ERROR;
     }
     return seL4_NoError;
+}
+
+void init_page_swap() {
+    nfs = get_nfs_context();
+    sglib_offset_queue_t_add(&offset_queue, 0);
+
+    // allocate a ntfn to wait till pagefile finished opening
+    seL4_CPtr ntfn;
+    ut_t *ut = alloc_retype(&ntfn, seL4_NotificationObject, seL4_NotificationBits);
+    ZF_LOGF_IF(!ut, "No memory for notification object");
+
+    nfs_open_cb_args_t cb_args = {.ntfn = ntfn};
+    int ret = nfs_open_async(nfs, "pagefile", O_RDWR | O_CREAT, nfs_open_cb, &cb_args); 
+    ZF_LOGF_IF(ret != 0, "queuing open pagefile failed: %s", nfs_get_error(nfs));
+
+    seL4_Wait(ntfn, NULL);
+
+    // free up allocations for ntfn
+    seL4_Error del_error = cspace_delete(&cspace, ntfn);
+    if (del_error != seL4_NoError) {
+        ZF_LOGF("Failed to delete ntfn cap, seL4_Error = %d", del_error);
+    }
+    cspace_free_slot(&cspace, ntfn);
+    ut_free(ut);
+}
+
+void nfs_open_cb(int status, UNUSED struct nfs_context *nfs, void *data,
+                 UNUSED void *private_data) {
+    if (status < 0) {
+        ZF_LOGF("open pagefile failed with \"%s\"\n", (char *)data);
+    }
+
+    seL4_Signal(((nfs_open_cb_args_t*)private_data)->ntfn);
+    pagefile_fh = (struct nfsfh*)data;
+}
+
+void nfs_pwrite_cb(int status, UNUSED struct nfs_context *nfs, void *data, 
+                  UNUSED void *private_data)
+{
+    if (status < 0) {
+        ZF_LOGF("pwrite to pagefile failed with \"%s\"\n", (char *)data);
+    }
+
+    nfs_pwrite_cb_args_t *args = private_data;
+    args->bytes_written = status;
+    seL4_Signal(args->ntfn);
 }
