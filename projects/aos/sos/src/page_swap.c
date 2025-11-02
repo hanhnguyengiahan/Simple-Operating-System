@@ -1,10 +1,16 @@
 #include <sos/gen_config.h>
 #include "page_swap.h"
+#include <nfsc/libnfs.h>
+#include "network.h"
+#include "fcntl.h"
 #include "mapping.h"
+
 #ifdef CONFIG_SOS_FRAME_LIMIT
-#define PAGES_QUEUE_MAX_SIZE ((CONFIG_SOS_FRAME_LIMIT == 0ul) ? (1 << 19) : CONFIG_SOS_FRAME_LIMIT)
+#define PAGES_QUEUE_MAX_SIZE    ((CONFIG_SOS_FRAME_LIMIT == 0ul) ? (1 << 19) : CONFIG_SOS_FRAME_LIMIT)
+#define OFFSET_QUEUE_MAX_SIZE   ((CONFIG_SOS_FRAME_LIMIT == 0ul) ? (1 << 19) : (CONFIG_SOS_FRAME_LIMIT * 10))
 #else
 #define PAGES_QUEUE_MAX_SIZE (1 << 19)
+const size_t OFFSET_QUEUE_MAX_SIZE = (1 << 19);
 #endif
 
 extern cspace_t *cspace;
@@ -32,9 +38,21 @@ typedef struct pages_queue
     size_t j;
 } pages_queue_t;
 
+/*  A queue that contains the currently free space in the pagefile (determined by the offset)
+It should always have at least one item in it, which is the offset to the end of the file.
+The initial item in the queue is offset 0.
+*/
+typedef struct offset_queue {
+    size_t arr[OFFSET_QUEUE_MAX_SIZE];
+    size_t i;
+    size_t j;
+} offset_queue_t;
+
 pages_queue_t in_memory_pages;
+offset_queue_t offset_queue;
 
 SGLIB_DEFINE_QUEUE_FUNCTIONS(pages_queue_t, page_metadata_t *, arr, i, j, PAGES_QUEUE_MAX_SIZE)
+SGLIB_DEFINE_QUEUE_FUNCTIONS(offset_queue_t, size_t, arr, i, j, OFFSET_QUEUE_MAX_SIZE)
 
 int swap_to_mem(page_metadata_t *page) {
     // read the content of this page from the disk
@@ -50,6 +68,37 @@ int swap_to_mem(page_metadata_t *page) {
     sglib_pages_queue_t_add(&in_memory_pages, page);
     
     return 0;
+}
+
+static void write_to_pagefile(page_metadata_t *page_metadata, seL4_CPtr ntfn) {
+    unsigned char* frame_content = frame_data(page_metadata->frame_ref);
+    // offset to the available space in pagefile
+    size_t available_offset = sglib_offset_queue_t_first_element(&offset_queue);
+    sglib_offset_queue_t_delete_first(&offset_queue);
+
+    // add the next available offset
+    sglib_offset_queue_t_add(&offset_queue, available_offset + PAGE_SIZE_4K);
+
+    // write content to pagefile at offset, must ensure all bytes are written
+    size_t total_bytes_written = 0;
+    nfs_pwrite_cb_args_t pwrite_cb_args = {.ntfn = ntfn};
+    
+    while (total_bytes_written < PAGE_SIZE_4K) {
+        size_t bytes_to_write = PAGE_SIZE_4K - total_bytes_written;
+        size_t offset = available_offset + total_bytes_written;
+
+        int ret = nfs_pwrite_async( nfs, pagefile_fh, offset, bytes_to_write, 
+                                    (const void*)(frame_content + total_bytes_written), 
+                                    nfs_pwrite_cb, &pwrite_cb_args); 
+        ZF_LOGF_IF(ret != 0, "queuing pwrite pagefile failed: %s", nfs_get_error(nfs));
+        
+        seL4_Wait(ntfn, NULL);
+        
+        total_bytes_written += pwrite_cb_args.bytes_written;
+    }
+
+    // save the offset to page_metadata
+    page_metadata->pagefile_offset = available_offset;
 }
 
 frame_t *evict_page() {
