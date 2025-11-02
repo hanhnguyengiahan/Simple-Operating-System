@@ -5,6 +5,7 @@
 #include "frame_table.h"
 #include "user_process.h"
 
+typedef size_t frame_ref_t;
 struct page_metadata
 {
     frame_ref_t frame_ref;
@@ -56,5 +57,5 @@ seL4_Error sos_shadow_map_frame(
 int sos_shadow_unmap_frame(uintptr_t vaddr, pgd_t *pgd, cspace_t *cspace);
 
 pgd_t *create_pgd();
-page_metadata_t *find_frame(uintptr_t vaddr, pgd_t *pgd);
+page_metadata_t *find_page(uintptr_t vaddr, pgd_t *pgd);
 unsigned char* find_frame_data(uintptr_t vaddr, pgd_t *pgd);

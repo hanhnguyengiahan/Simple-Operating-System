@@ -137,14 +137,14 @@ static size_t copy_from_user(void* to, const void* from, size_t nbyte) {
     
     char *temp = (char*) to;
     while (rem_bytes > 0) {
-        frame_metadata_t *frame = find_frame(from_vaddr, user_process.page_global_directory);
-        if (!frame) {
-            ZF_LOGE("Unable to find a frame for buf_vaddr at %p", from_vaddr);
+        page_metadata_t *page = find_page(from_vaddr, user_process.page_global_directory);
+        if (!page) {
+            ZF_LOGE("Unable to find a page for buf_vaddr at %p", from_vaddr);
             return bytes_copied;
         }
 
         // source data of the "from" buf
-        unsigned char* source_data = frame_data(frame->frame_ref);
+        unsigned char* source_data = frame_data(page->frame_ref);
 
         size_t offset = from_vaddr % PAGE_SIZE_4K;
         size_t max_bytes_to_copy = PAGE_SIZE_4K - offset;
@@ -167,8 +167,8 @@ static size_t copy_to_user(void* to, const void* from, size_t nbyte) {
     size_t bytes_copied = 0;
     uintptr_t to_vaddr = (uintptr_t) to;
     while (rem_bytes > 0) {
-        frame_metadata_t *frame = find_frame(to_vaddr, user_process.page_global_directory);
-        if (!frame) {
+        page_metadata_t *page = find_page(to_vaddr, user_process.page_global_directory);
+        if (!page) {
             ZF_LOGI("vaddr %p is not mapped to any frame, trying to allocate frame...", (void*)to_vaddr);
             vm_region_t *valid_region = find_valid_region(to_vaddr, BIT(6), user_process.vm_regions);
 
@@ -188,7 +188,7 @@ static size_t copy_to_user(void* to, const void* from, size_t nbyte) {
         }
 
         // source data of the "to" buf
-        unsigned char* source_data = frame_data(frame->frame_ref);
+        unsigned char* source_data = frame_data(page->frame_ref);
 
         size_t offset = to_vaddr % PAGE_SIZE_4K;
         size_t max_bytes_to_copy = PAGE_SIZE_4K - offset;
@@ -1003,8 +1003,8 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
 
     /* allocate a stack frame for the user application*/
     seL4_Error err = allocate_new_frame(cspace, stack_bottom, &user_process, seL4_ReadWrite);
-    frame_metadata_t *frame_metadata = find_frame(stack_bottom, user_process.page_global_directory);
-    user_process.stack = frame_metadata->frame_cap;
+    page_metadata_t *page = find_page(stack_bottom, user_process.page_global_directory);
+    user_process.stack = page->frame_cap;
 
     /* allocate a slot to duplicate the stack frame cap so we can map it into our address space */
     seL4_CPtr local_stack_cptr = cspace_alloc_slot(cspace);
@@ -1160,8 +1160,8 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
     }
 
     /* Saves the IPC buffer capability */
-    frame_metadata_t *frame_metadata = find_frame(PROCESS_IPC_BUFFER, user_process.page_global_directory);
-    user_process.ipc_buffer = frame_metadata->frame_cap;
+    page_metadata_t *page_metadata = find_page(PROCESS_IPC_BUFFER, user_process.page_global_directory);
+    user_process.ipc_buffer = page_metadata->frame_cap;
 
     /* allocate a new slot in the target cspace which we will mint a badged endpoint cap into --
      * the badge is used to identify the process, which will come in handy when you have multiple

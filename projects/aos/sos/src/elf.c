@@ -96,10 +96,10 @@ static int load_segment_into_vspace(cspace_t *cspace, const char *src, size_t se
             return -1;
         }
 
-        frame_metadata_t *frame_metadata = find_frame(loadee_vaddr, user_process->page_global_directory);
+        page_metadata_t *page_metadata = find_page(loadee_vaddr, user_process->page_global_directory);
         
         /* finally copy the data */
-        unsigned char *loader_data = frame_data(frame_metadata->frame_ref);
+        unsigned char *loader_data = frame_data(page_metadata->frame_ref);
 
         /* Write any zeroes at the start of the block. */
         size_t leading_zeroes = dst % PAGE_SIZE_4K;

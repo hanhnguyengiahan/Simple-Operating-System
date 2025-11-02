@@ -235,7 +235,7 @@ int sos_shadow_unmap_frame(uintptr_t vaddr, pgd_t *pgd, cspace_t *cspace) {
     return 0;
 }
 
-page_metadata_t *find_frame(uintptr_t vaddr, pgd_t *pgd) {
+page_metadata_t *find_page(uintptr_t vaddr, pgd_t *pgd) {
     size_t pgd_index = get_pgd_bits(vaddr);
     size_t pud_index = get_pud_bits(vaddr);
     size_t pd_index = get_pd_bits(vaddr);
@@ -263,11 +263,11 @@ page_metadata_t *find_frame(uintptr_t vaddr, pgd_t *pgd) {
 }
 
 unsigned char* find_frame_data(uintptr_t vaddr, pgd_t *pgd) {
-    // find the frame associated with this buf_vaddr
-    page_metadata_t *frame = find_frame(vaddr, pgd);
-    if (!frame) {
+    // find the page associated with this buf_vaddr
+    page_metadata_t *page = find_page(vaddr, pgd);
+    if (!page) {
         ZF_LOGE("page not found for vaddr=%p\n", (void*)vaddr);
         return NULL;
     }
-    return frame_data(frame->frame_ref);
+    return frame_data(page->frame_ref);
 }
