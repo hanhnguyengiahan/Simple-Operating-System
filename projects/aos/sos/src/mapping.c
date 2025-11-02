@@ -144,7 +144,7 @@ static seL4_Error sos_map_frame(
     return sos_shadow_map_frame(vaddr, page_metadata, cspace, user_process, rights, attr);
 }
 
-seL4_Error allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t *user_process, seL4_CapRights_t rights) {
+seL4_Error init_frame_metadata(cspace_t *cspace, frame_ref_t *out_frame, seL4_CPtr *out_frame_cptr, seL4_CapRights_t rights) {
     frame_ref_t frame = alloc_frame();
     if (frame == NULL_FRAME) {
         ZF_LOGE("Couldn't allocate additional frame");
@@ -165,6 +165,21 @@ seL4_Error allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t 
         cspace_free_slot(cspace, frame_cptr);
         free_frame(frame);
         ZF_LOGE("Failed to copy cap, seL4_Error = %d\n", err);
+        return err;
+    }
+
+    *out_frame = frame;
+    *out_frame_cptr = frame_cptr;
+    return seL4_NoError;
+}
+
+seL4_Error alloc_map_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t *user_process, seL4_CapRights_t rights) {
+    frame_ref_t frame;
+    seL4_CPtr frame_cptr;
+
+    seL4_Error err = init_frame_metadata(cspace, &frame, &frame_cptr, rights);
+    if (err != seL4_NoError) {
+        ZF_LOGE("Couldn't initialise frame metadata");
         return err;
     }
 
@@ -198,6 +213,24 @@ seL4_Error allocate_new_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t 
         ZF_LOGE("Unable to map extra frame for user app, seL4_Error = %d\n", err);
         return err;
     }
+
+    return seL4_NoError;
+}
+
+seL4_Error dealloc_unmap_frame(cspace_t *cspace, page_metadata_t *page) {
+    seL4_Error err = seL4_ARM_Page_Unmap(page->frame_cap);
+    if (err != seL4_NoError) {
+        ZF_LOGE("Unable to unmap the page when deallocating the frames");
+        return err;
+    }
+
+    err = cspace_delete(cspace, page->frame_cap);
+    if (err != seL4_NoError) {
+        ZF_LOGE("Unable to delete the copy of the frame cap");
+        return err;
+    }
+    cspace_free_slot(cspace, page->frame_cap);
+    free_frame(page->frame_ref);
 
     return seL4_NoError;
 }
