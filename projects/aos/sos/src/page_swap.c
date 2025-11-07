@@ -38,6 +38,28 @@ typedef struct nfs_pread_pagefile_cb_args {
 } nfs_pread_pagefile_cb_args_t;
 static void nfs_pread_pagefile_cb(int status, UNUSED struct nfs_context *nfs, void *data, UNUSED void *private_data);
 
+/**
+ *  Read the content saved in pagefile, given the pagefile offset from page metadata.
+ *  Then, writes exactly one page of data to buf.
+ *  
+ *  @param buf              buffer that will store the data read from the page
+ *  @param page_metadata    page metadata that has the offset of their saved content from pagefile
+ * 
+ */
+static void read_from_pagefile(unsigned char* buf, page_metadata_t *page_metadata);
+
+/**
+ *  Write the content of the given page to pagefile.
+ *
+ *  This function reads the data from the associated frame of the page, 
+ *  writes that data to the pagefile starting at the available offset,
+ *  then store this offset in the page metada.
+ *
+ *  @param page_metadata    page that has the content to be put in the pagefile
+ * 
+ */
+static void write_to_pagefile(page_metadata_t *page_metadata);
+
 typedef struct pages_queue
 {
     page_metadata_t *arr[PAGES_QUEUE_MAX_SIZE];
@@ -82,16 +104,6 @@ int swap_to_mem(page_metadata_t *page, seL4_CPtr ntfn) {
     return 0;
 }
 
-/**
- *  Write the content of the given page to pagefile.
- *
- *  This function reads the data from the associated frame of the page, 
- *  writes that data to the pagefile starting at the available offset,
- *  then store this offset in the page metada.
- *
- *  @param page_metadata    page that has the content to be put in the pagefile
- * 
- */
 static void write_to_pagefile(page_metadata_t *page_metadata) {
     unsigned char* frame_content = frame_data(page_metadata->frame_ref);
     // offset to the available space in pagefile
@@ -131,14 +143,6 @@ static void write_to_pagefile(page_metadata_t *page_metadata) {
     page_metadata->pagefile_offset = available_offset;
 }
 
-/**
- *  Read the content saved in pagefile, given the pagefile offset from page metadata.
- *  Then, writes exactly one page of data to buf.
- *  
- *  @param buf              buffer that will store the data read from the page
- *  @param page_metadata    page metadata that has the offset of their saved content from pagefile
- * 
- */
 static void read_from_pagefile(unsigned char* buf, page_metadata_t *page_metadata) {
     size_t pagefile_offset = page_metadata->pagefile_offset;
 
