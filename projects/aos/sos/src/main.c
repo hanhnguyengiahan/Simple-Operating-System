@@ -342,7 +342,7 @@ void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
 
     uintptr_t path_vaddr    = seL4_GetMR(1);
-    int path_len            = seL4_GetMR(2) + 1; // now includes null terminator
+    size_t path_len         = seL4_GetMR(2);
     fmode_t mode            = seL4_GetMR(3);
 
     unsigned char *path_data = find_frame_data(path_vaddr, user_process.page_global_directory);
@@ -351,12 +351,13 @@ void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
         return;
     }
 
-    char *temp_path_buf = malloc(path_len);
+    char *temp_path_buf = malloc(path_len + 1);
     if (temp_path_buf == NULL) {
         ZF_LOGE("Failed to allocate memory for temp_path_buf");
         seL4_SetMR(0, -1);
         return;        
     }
+    temp_path_buf[path_len] = '\0';
 
     size_t nbyte = copy_from_user((void *)temp_path_buf, (void *)path_vaddr, path_len);
 
@@ -456,7 +457,7 @@ void handler_sos_close(seL4_MessageInfo_t *reply_msg, int thread_index) {
     if (fd == CONSOLE_FD) {
         user_process.vfs->fd_table[fd].is_opened = false;
         user_process.vfs->fd_table[fd].mode = -1;
-        free(user_process.vfs->fd_table[fd].path);
+        user_process.vfs->fd_table[fd].path = NULL; // do not free console_fd path, it's a string literal, not memory allocated from the heap
         seL4_SetMR(0, 0);
         return;
     }
