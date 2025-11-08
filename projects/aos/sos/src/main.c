@@ -291,7 +291,7 @@ int handler_sos_open_nwcs(fmode_t mode) {
 }
 
 void handler_sos_stat(seL4_MessageInfo_t *reply_msg, int thread_index) {
-    ZF_LOGE("syscall: stat!\n");
+    ZF_LOGV("syscall: stat!\n");
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
 
     uintptr_t path_vaddr        = seL4_GetMR(1);
@@ -338,7 +338,7 @@ void handler_sos_stat(seL4_MessageInfo_t *reply_msg, int thread_index) {
 }   
 
 void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
-    ZF_LOGE("syscall: open!\n");
+    ZF_LOGV("syscall: open!\n");
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
 
     uintptr_t path_vaddr    = seL4_GetMR(1);
@@ -436,7 +436,7 @@ void nfs_close_cb(int status, struct nfs_context *nfs, void *data, void *private
 }
 
 void handler_sos_close(seL4_MessageInfo_t *reply_msg, int thread_index) {
-    ZF_LOGE("syscall: close!\n");
+    ZF_LOGV("syscall: close!\n");
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
 
     size_t fd = seL4_GetMR(1);    
