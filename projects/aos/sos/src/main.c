@@ -398,7 +398,7 @@ void handler_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index) {
         return;
     }
 
-    seL4_Wait(worker_threads[thread_index], NULL);
+    seL4_Wait(worker_threads[thread_index]->ntfn, NULL);
 
     err = private_data->err;
     free(private_data);
