@@ -151,9 +151,8 @@ int test_file_system() {
 
     // write to file
     RUN_TEST(test_write_file_opened_with_write_mode);
+    
     // file stat
-
-    printf("File system test\tPassed\n");
 }
 
 

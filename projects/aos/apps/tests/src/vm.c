@@ -61,6 +61,4 @@ void test_virtual_memory()
     printf("==========VIRTUAL MEMORY============\n");
     RUN_TEST(stack_test);
     RUN_TEST(heap_test);
-
-    printf("Virtual memory test\tPassed\n");
 }
