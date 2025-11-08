@@ -1,4 +1,4 @@
-#include "vm.h"
+#include <tests/vm.h>
 #include <utils/page.h>
 
 #define NBLOCKS 9
