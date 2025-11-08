@@ -23,6 +23,7 @@ add_executable(
     src/vm.c
 )
 target_link_libraries(tests sel4runtime muslc sel4 sosapi utils)
+target_include_directories(tests PRIVATE "include")
 
 # warn about everything
 add_compile_options(-Wall -Werror -W -Wextra)

@@ -1,5 +1,6 @@
 #include <tests/vm.h>
 #include <utils/page.h>
+#include <tests/macros.h>
 
 #define NBLOCKS 9
 #define NPAGES_PER_BLOCK 28
@@ -26,12 +27,10 @@ do_pt_test(char **buf)
     }
 }
 
-void test_virtual_memory()
-{
-    /* need a decent sized stack */
+static void stack_test() {
+     /* need a decent sized stack */
     char buf1[NBLOCKS][NPAGES_PER_BLOCK * PAGE_SIZE_4K];
     char *buf1_ptrs[NBLOCKS];
-    char *buf2[NBLOCKS];
 
     /* check the stack is above phys mem */
     for (int b = 0; b < NBLOCKS; b++) {
@@ -41,6 +40,10 @@ void test_virtual_memory()
 
     // /* stack test */
     do_pt_test(buf1_ptrs);
+}
+
+static void heap_test() {
+    char *buf2[NBLOCKS];
 
     // /* heap test */
     for (int b = 0; b < NBLOCKS; b++) {
@@ -51,6 +54,13 @@ void test_virtual_memory()
     for (int b = 0; b < NBLOCKS; b++) {
         free(buf2[b]);
     }
+}
+
+void test_virtual_memory()
+{
+    printf("==========VIRTUAL MEMORY============\n");
+    RUN_TEST(stack_test);
+    RUN_TEST(heap_test);
 
     printf("Virtual memory test\tPassed\n");
 }
