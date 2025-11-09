@@ -1,11 +1,10 @@
 #pragma once
 #include "pagetable.h"
-#include "frame_table.h"
 
-/*  Evict a page from its allocated frame using the second-chance replacement policy.
-    Returns the freed frame for next use.
+/*  If current queue is full, evict a page from its allocated frame using the second-chance replacement policy.
+    Otherwise, do nothing. After calling `evict_page()`, it is guaranteed that there is at least one free frame in the frame table.
 */
-frame_t *evict_page();
+void evict_page();
 
 /**
  *  Swap a page from the disk to memory.

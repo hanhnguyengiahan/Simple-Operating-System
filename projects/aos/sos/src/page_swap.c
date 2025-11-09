@@ -84,23 +84,20 @@ SGLIB_DEFINE_QUEUE_FUNCTIONS(pages_queue_t, page_metadata_t *, arr, i, j, PAGES_
 SGLIB_DEFINE_QUEUE_FUNCTIONS(offset_queue_t, size_t, arr, i, j, OFFSET_QUEUE_MAX_SIZE)
 
 int swap_to_mem(page_metadata_t *page, seL4_CPtr ntfn) {
-    // read the content of this page from the disk
-    unsigned char* buf[PAGE_SIZE_4K];
-    read_from_pagefile(buf, page);
-
-    // get the freed frame
-    frame_t *freed_frame = evict_page();
-    assert(!freed_frame);
+    evict_page();
+    
+    frame_ref_t frame_ref = alloc_frame();
+    assert(frame_ref != NULL_FRAME);
 
     // write the content of this page to the frame
-    memcpy(&temp[bytes_copied], &buf, PAGE_SIZE_4K);
-
+    unsigned char *data = frame_data(frame_ref);
+    read_from_pagefile(data, page);
 
     // update reference bit and offset
     page->reference_bit = 1;
     page->pagefile_offset = -1;
-    sglib_pages_queue_t_add(&in_memory_pages, page);
     
+    in_memory_pages_add(page);
     return 0;
 }
 
@@ -176,40 +173,30 @@ static void read_from_pagefile(unsigned char* buf, page_metadata_t *page_metadat
     free_cap(ut, ntfn);
 }
 
-frame_t *evict_page() {
+void evict_page() {
     while (!sglib_pages_queue_t_is_empty(&in_memory_pages)) {
         page_metadata_t *page = sglib_pages_queue_t_first_element(&in_memory_pages);
         sglib_pages_queue_t_delete_first(&in_memory_pages);
 
         if (page->reference_bit == 1) { /* give it a second chance */
-            sglib_pages_queue_t_add(&in_memory_pages, page);
+            in_memory_pages_add(page);
             page->reference_bit = 0;
 
             // unmap the page so that we can simulate the reference bit via vm fault
             seL4_Error err = seL4_ARM_Page_Unmap(page->frame_cap);
-            if (err != seL4_NoError) {
-                ZF_LOGE("Unable to unmap the page, seL4_Error = %d\n", err);
-                return NULL;
-            }
+            ZF_LOGF_IF(err != seL4_NoError, "Unable to unmap the page, seL4_Error = %d\n", err);
         } else if (page->reference_bit == 0) {
             write_to_pagefile(page);
-
-            // unmap the page, delete its frame cap and slot
-            seL4_Error err = dealloc_unmap_frame(&cspace, page);
-            if (err != seL4_NoError) {
-                ZF_LOGE("Unable to deallocate and unmap the page, seL4_Error = %d\n", err);
-                return NULL;
-            }
 
             // zero out the frame
             unsigned char *data = frame_data(page->frame_ref);
             memset(data, 0, PAGE_SIZE_4K);
 
-            return frame_from_ref(page->frame_ref);
+            // destruct page_metadata
+            seL4_Error err = dealloc_unmap_frame(&cspace, page);
+            ZF_LOGF_IF(err != seL4_NoError, "Unable to deallocate and unmap the page, seL4_Error = %d\n", err);
         }
     }
-
-    return NULL;
 }
 
 seL4_Error reference_page(page_metadata_t *page, seL4_CPtr vspace, seL4_Word vaddr, seL4_CapRights_t rights) {
