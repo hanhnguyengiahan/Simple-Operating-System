@@ -914,7 +914,6 @@ int handle_vm_fault(seL4_Fault_t fault, seL4_CPtr worker_thread_ntfn) {
             return reference_page(page, user_process.vspace, faultaddr, valid_region->rights);
         }
     } else { /* faultaddr has not been mapped, try alloc a frame and map that frame to faultaddr */
-        printf("fault address has not been mapped\n");
         return alloc_map_frame(&cspace, faultaddr, &user_process, valid_region->rights);
     }
 }
@@ -925,10 +924,6 @@ seL4_MessageInfo_t handle_fault(seL4_MessageInfo_t tag, bool *have_reply, seL4_C
     seL4_Fault_t fault = seL4_getFault(tag);
     seL4_Uint64 fault_type = seL4_Fault_get_seL4_FaultType(fault);
 
-    debug_print_fault(tag, APP_NAME);
-    /* dump registers too */
-    debug_dump_registers(user_process.tcb);
-    
     switch (fault_type) {
         
         case seL4_Fault_VMFault:
