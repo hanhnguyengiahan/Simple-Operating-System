@@ -5,7 +5,7 @@
 #include "fcntl.h"
 #include "mapping.h"
 #include "cap_utils.h"
-
+#include "backtrace.h"
 #ifdef CONFIG_SOS_FRAME_LIMIT
 #define PAGES_QUEUE_MAX_SIZE    ((CONFIG_SOS_FRAME_LIMIT == 0ul) ? (1 << 19) : CONFIG_SOS_FRAME_LIMIT)
 #define OFFSET_QUEUE_MAX_SIZE   ((CONFIG_SOS_FRAME_LIMIT == 0ul) ? (1 << 19) : (CONFIG_SOS_FRAME_LIMIT * 10))
@@ -102,7 +102,25 @@ int swap_to_mem(page_metadata_t *page, seL4_CPtr ntfn) {
     unsigned char *data = frame_data(frame_ref);
     read_from_pagefile(data, page);
 
-    // update reference bit and offset
+
+    // update the page's status
+    /* allocate a slot to duplicate the frame cap so we can map it into the application */
+    seL4_CPtr frame_cptr = cspace_alloc_slot(&cspace);
+    if (frame_cptr == seL4_CapNull) {
+        free_frame(frame_ref);
+        ZF_LOGE("Failed to alloc slot for extra frame cap");
+        return seL4_NotEnoughMemory;
+    }
+
+    /* copy the frame cap into the slot */
+    seL4_Error err = cspace_copy(&cspace, frame_cptr, &cspace, frame_page(frame_ref), page->rights);
+    if (err != seL4_NoError) {
+        cspace_free_slot(&cspace, frame_cptr);
+        free_frame(frame_ref);
+        ZF_LOGE("Failed to copy cap, seL4_Error = %d\n", err);
+        return err;
+    }
+    page->frame_cap = frame_cptr;
     page->reference_bit = 1;
     page->pagefile_offset = -1;
     
@@ -127,6 +145,8 @@ static size_t free_pagefile_offsets_pop() {
 }
 
 static void write_to_pagefile(page_metadata_t *page_metadata) {
+    // printf("------------write to pagefile-------------\n");
+
     unsigned char* frame_content = frame_data(page_metadata->frame_ref);
     // offset to the available space in pagefile
     size_t available_offset = free_pagefile_offsets_pop();
@@ -140,19 +160,20 @@ static void write_to_pagefile(page_metadata_t *page_metadata) {
 
     nfs_pwrite_pagefile_cb_args_t pwrite_cb_args = {.ntfn = ntfn};
     
-    while (total_bytes_written < PAGE_SIZE_4K) {
-        size_t bytes_to_write = PAGE_SIZE_4K - total_bytes_written;
-        size_t offset = available_offset + total_bytes_written;
 
-        int ret = nfs_pwrite_async( nfs, pagefile_fh, offset, bytes_to_write, 
-                                    (const void*)(frame_content + total_bytes_written), 
-                                    nfs_pwrite_pagefile_cb, &pwrite_cb_args); 
-        ZF_LOGF_IF(ret != 0, "queuing pwrite pagefile failed: %s", nfs_get_error(nfs));
-        
-        seL4_Wait(ntfn, NULL);
-        
-        total_bytes_written += pwrite_cb_args.bytes_written;
-    }
+    // while (total_bytes_written < PAGE_SIZE_4K) {
+    size_t bytes_to_write = PAGE_SIZE_4K - total_bytes_written;
+    size_t offset = available_offset + total_bytes_written;
+
+    int ret = nfs_pwrite_async( nfs, pagefile_fh, offset, bytes_to_write, 
+                                (const void*)(frame_content + total_bytes_written), 
+                                nfs_pwrite_pagefile_cb, &pwrite_cb_args);
+    ZF_LOGF_IF(ret != 0, "queuing pwrite pagefile failed: %s", nfs_get_error(nfs));
+    
+    seL4_Wait(ntfn, NULL);
+    
+    total_bytes_written += pwrite_cb_args.bytes_written;
+    // }
 
     // free the notification object
     free_cap(ut, ntfn);
@@ -172,19 +193,19 @@ static void read_from_pagefile(unsigned char* buf, page_metadata_t *page_metadat
     
     nfs_pread_pagefile_cb_args_t pread_cb_args = {.ntfn = ntfn};
     
-    while (total_bytes_read < PAGE_SIZE_4K) {
-        size_t bytes_to_read = PAGE_SIZE_4K - total_bytes_read;
-        size_t offset = pagefile_offset + total_bytes_read;
+    // while (total_bytes_read < PAGE_SIZE_4K) {
+    size_t bytes_to_read = PAGE_SIZE_4K - total_bytes_read;
+    size_t offset = pagefile_offset + total_bytes_read;
 
-        pread_cb_args.buf = buf + total_bytes_read;
+    pread_cb_args.buf = buf + total_bytes_read;
 
-        int ret = nfs_pread_async(nfs, pagefile_fh, offset, bytes_to_read, nfs_pread_pagefile_cb, &pread_cb_args);
-        ZF_LOGF_IF(ret != 0, "queuing pread pagefile failed: %s", nfs_get_error(nfs));
-        
-        seL4_Wait(ntfn, NULL);
-        
-        total_bytes_read += pread_cb_args.bytes_read;
-    }
+    int ret = nfs_pread_async(nfs, pagefile_fh, offset, bytes_to_read, nfs_pread_pagefile_cb, &pread_cb_args);
+    ZF_LOGF_IF(ret != 0, "queuing pread pagefile failed: %s", nfs_get_error(nfs));
+    
+    seL4_Wait(ntfn, NULL);
+    
+    total_bytes_read += pread_cb_args.bytes_read;
+    // }
 
     // free the notification object
     free_cap(ut, ntfn);
@@ -203,15 +224,17 @@ void evict_page() {
             seL4_Error err = seL4_ARM_Page_Unmap(page->frame_cap);
             ZF_LOGF_IF(err != seL4_NoError, "Unable to unmap the page, seL4_Error = %d\n", err);
         } else if (page->reference_bit == 0) {
+            // printf("frame ref: %lu\n", page->frame_ref);
             write_to_pagefile(page);
 
             // zero out the frame
-            unsigned char *data = frame_data(page->frame_ref);
-            memset(data, 0, PAGE_SIZE_4K);
+            // unsigned char *data = frame_data(page->frame_ref);
+            // memset(data, 0, PAGE_SIZE_4K);
 
             // destruct page_metadata
             seL4_Error err = dealloc_unmap_frame(&cspace, page);
             ZF_LOGF_IF(err != seL4_NoError, "Unable to deallocate and unmap the page, seL4_Error = %d\n", err);
+            break;
         }
     }
 }
@@ -267,7 +290,8 @@ void nfs_pread_pagefile_cb(int status, UNUSED struct nfs_context *nfs, void *dat
 
     nfs_pread_pagefile_cb_args_t *args = private_data;
     args->bytes_read = status;
-    args->buf = data;
-
+    // args->buf = data;
+    unsigned char *return_data = data;
+    memcpy((void *)args->buf, data, status);
     seL4_Signal(args->ntfn);
 }

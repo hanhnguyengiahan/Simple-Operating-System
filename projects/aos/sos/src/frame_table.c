@@ -130,6 +130,7 @@ frame_ref_t alloc_frame(void)
         evict_page();
         frame = pop_front(&frame_table.free);
         assert(frame != NULL_FRAME);
+        push_back(&frame_table.allocated, frame);
     }
     return ref_from_frame(frame);
 }

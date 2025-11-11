@@ -894,16 +894,17 @@ void write_to_buf(UNUSED struct network_console *network_console, char c) {
 }
 int handle_vm_fault(seL4_Fault_t fault, seL4_CPtr worker_thread_ntfn) {
     // get the vaddr and action of this fault
-    uintptr_t faultaddr = ROUND_DOWN(seL4_Fault_VMFault_get_Addr(fault), PAGE_SIZE_4K);
+    uintptr_t original_faultadrr = seL4_Fault_VMFault_get_Addr(fault);
     seL4_Uint64 fsr = seL4_Fault_VMFault_get_FSR(fault);
 
     // find the vm_region that this faultaddr lies within
-    vm_region_t *valid_region = find_valid_region(faultaddr, fsr, user_process.vm_regions);
+    vm_region_t *valid_region = find_valid_region(original_faultadrr, fsr, user_process.vm_regions);
     if (valid_region == NULL) {
-        ZF_LOGE("Fault address %p resolves to an invalid region access", (void*)faultaddr);
+        ZF_LOGE("Fault address %p resolves to an invalid region access", (void*)original_faultadrr);
         return -1;
     }
     
+    uintptr_t faultaddr = ROUND_DOWN(seL4_Fault_VMFault_get_Addr(fault), PAGE_SIZE_4K);
     // find the associated page of this faultaddr
     page_metadata_t *page = find_page(faultaddr, user_process.page_global_directory);
     if (page != NULL) { /* page is either on disk or in memory */
@@ -913,6 +914,7 @@ int handle_vm_fault(seL4_Fault_t fault, seL4_CPtr worker_thread_ntfn) {
             return reference_page(page, user_process.vspace, faultaddr, valid_region->rights);
         }
     } else { /* faultaddr has not been mapped, try alloc a frame and map that frame to faultaddr */
+        printf("fault address has not been mapped\n");
         return alloc_map_frame(&cspace, faultaddr, &user_process, valid_region->rights);
     }
 }
@@ -923,7 +925,12 @@ seL4_MessageInfo_t handle_fault(seL4_MessageInfo_t tag, bool *have_reply, seL4_C
     seL4_Fault_t fault = seL4_getFault(tag);
     seL4_Uint64 fault_type = seL4_Fault_get_seL4_FaultType(fault);
 
+    debug_print_fault(tag, APP_NAME);
+    /* dump registers too */
+    debug_dump_registers(user_process.tcb);
+    
     switch (fault_type) {
+        
         case seL4_Fault_VMFault:
             ret = handle_vm_fault(fault, worker_thread_ntfn);
             break;
@@ -1464,14 +1471,19 @@ NORETURN void *main_continued(UNUSED void *arg)
     seL4_Error err = seL4_TCB_UnbindNotification(seL4_CapInitThreadTCB);
     ZF_LOGF_IF(err != seL4_NoError, "Failed to unbind notification from init thread TCB, seL4_Error=%d", err);
 
-    thread_create(syscall_loop, interrupts_handler_args, MAX_WORKER_THREADS + 1, true, seL4_MinPrio, ntfn, true);
+    thread_create(syscall_loop, interrupts_handler_args, MAX_WORKER_THREADS + 1, true, seL4_MaxPrio, ntfn, true);
 
     /* Start user process */
     printf("Start first process\n");
     bool success = start_first_process(APP_NAME, worker_threads[0]->ipc_ep);
     ZF_LOGF_IF(!success, "Failed to start first process");
-    
-    seL4_Wait(seL4_CapNull, NULL);
+    struct syscall_loop_args *main_thread_args = malloc(sizeof(struct syscall_loop_args));
+    ZF_LOGF_IF(!main_thread_args, "Failed to allocate memory to main_thread_args");
+
+    seL4_CPtr main_thread_ipc_ep;
+    create_cap(&main_thread_ipc_ep, seL4_EndpointObject, seL4_EndpointBits);
+    main_thread_args->ep = ipc_ep;
+    syscall_loop(main_thread_args);
 }
 /*
  * Main entry point - called by crt.
