@@ -120,6 +120,7 @@ int swap_to_mem(page_metadata_t *page, seL4_CPtr ntfn) {
         ZF_LOGE("Failed to copy cap, seL4_Error = %d\n", err);
         return err;
     }
+    page->frame_ref = frame_ref;
     page->frame_cap = frame_cptr;
     page->reference_bit = 1;
     page->pagefile_offset = -1;
@@ -226,10 +227,6 @@ void evict_page() {
         } else if (page->reference_bit == 0) {
             // printf("frame ref: %lu\n", page->frame_ref);
             write_to_pagefile(page);
-
-            // zero out the frame
-            // unsigned char *data = frame_data(page->frame_ref);
-            // memset(data, 0, PAGE_SIZE_4K);
 
             // destruct page_metadata
             seL4_Error err = dealloc_unmap_frame(&cspace, page);
