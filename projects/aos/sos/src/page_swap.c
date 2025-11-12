@@ -93,6 +93,7 @@ SGLIB_DEFINE_QUEUE_FUNCTIONS(pages_queue_t, page_metadata_t *, arr, i, j, PAGES_
 SGLIB_DEFINE_QUEUE_FUNCTIONS(offset_queue_t, size_t, arr, i, j, OFFSET_QUEUE_MAX_SIZE)
 
 int swap_to_mem(page_metadata_t *page, seL4_CPtr ntfn) {
+    printf("swap to mem\n");
     evict_page();
     
     frame_ref_t frame_ref = alloc_frame();
@@ -102,8 +103,6 @@ int swap_to_mem(page_metadata_t *page, seL4_CPtr ntfn) {
     unsigned char *data = frame_data(frame_ref);
     read_from_pagefile(data, page);
 
-
-    // update the page's status
     /* allocate a slot to duplicate the frame cap so we can map it into the application */
     seL4_CPtr frame_cptr = cspace_alloc_slot(&cspace);
     if (frame_cptr == seL4_CapNull) {
@@ -120,10 +119,13 @@ int swap_to_mem(page_metadata_t *page, seL4_CPtr ntfn) {
         ZF_LOGE("Failed to copy cap, seL4_Error = %d\n", err);
         return err;
     }
+
+    // update the page's status
     page->frame_ref = frame_ref;
     page->frame_cap = frame_cptr;
     page->reference_bit = 1;
     page->pagefile_offset = -1;
+    printf("update page status\n");
     
     in_memory_pages_add(page);
     return 0;
@@ -162,19 +164,19 @@ static void write_to_pagefile(page_metadata_t *page_metadata) {
     nfs_pwrite_pagefile_cb_args_t pwrite_cb_args = {.ntfn = ntfn};
     
 
-    // while (total_bytes_written < PAGE_SIZE_4K) {
-    size_t bytes_to_write = PAGE_SIZE_4K - total_bytes_written;
-    size_t offset = available_offset + total_bytes_written;
+    while (total_bytes_written < PAGE_SIZE_4K) {
+        size_t bytes_to_write = PAGE_SIZE_4K - total_bytes_written;
+        size_t offset = available_offset + total_bytes_written;
 
-    int ret = nfs_pwrite_async( nfs, pagefile_fh, offset, bytes_to_write, 
-                                (const void*)(frame_content + total_bytes_written), 
-                                nfs_pwrite_pagefile_cb, &pwrite_cb_args);
-    ZF_LOGF_IF(ret != 0, "queuing pwrite pagefile failed: %s", nfs_get_error(nfs));
-    
-    seL4_Wait(ntfn, NULL);
-    
-    total_bytes_written += pwrite_cb_args.bytes_written;
-    // }
+        int ret = nfs_pwrite_async( nfs, pagefile_fh, offset, bytes_to_write, 
+                                    (const void*)(frame_content + total_bytes_written), 
+                                    nfs_pwrite_pagefile_cb, &pwrite_cb_args);
+        ZF_LOGF_IF(ret != 0, "queuing pwrite pagefile failed: %s", nfs_get_error(nfs));
+        
+        seL4_Wait(ntfn, NULL);
+        
+        total_bytes_written += pwrite_cb_args.bytes_written;
+    }
 
     // free the notification object
     free_cap(ut, ntfn);
@@ -194,19 +196,20 @@ static void read_from_pagefile(unsigned char* buf, page_metadata_t *page_metadat
     
     nfs_pread_pagefile_cb_args_t pread_cb_args = {.ntfn = ntfn};
     
-    // while (total_bytes_read < PAGE_SIZE_4K) {
-    size_t bytes_to_read = PAGE_SIZE_4K - total_bytes_read;
-    size_t offset = pagefile_offset + total_bytes_read;
+    while (total_bytes_read < PAGE_SIZE_4K) {
+        size_t bytes_to_read = PAGE_SIZE_4K - total_bytes_read;
+        size_t offset = pagefile_offset + total_bytes_read;
 
-    pread_cb_args.buf = buf + total_bytes_read;
+        pread_cb_args.buf = buf + total_bytes_read;
 
-    int ret = nfs_pread_async(nfs, pagefile_fh, offset, bytes_to_read, nfs_pread_pagefile_cb, &pread_cb_args);
-    ZF_LOGF_IF(ret != 0, "queuing pread pagefile failed: %s", nfs_get_error(nfs));
-    
-    seL4_Wait(ntfn, NULL);
-    
-    total_bytes_read += pread_cb_args.bytes_read;
-    // }
+        int ret = nfs_pread_async(nfs, pagefile_fh, offset, bytes_to_read, nfs_pread_pagefile_cb, &pread_cb_args);
+        ZF_LOGF_IF(ret != 0, "queuing pread pagefile failed: %s", nfs_get_error(nfs));
+        
+        seL4_Wait(ntfn, NULL);
+        
+        total_bytes_read += pread_cb_args.bytes_read;
+        printf("total bytes read: %d\n", total_bytes_read);
+    }
 
     // free the notification object
     free_cap(ut, ntfn);
@@ -252,7 +255,7 @@ void init_page_swap() {
     sglib_offset_queue_t_add(&free_pagefile_offsets, 0);
     free_pagefile_offsets.eof_offset = 0;
 
-    int ret = nfs_open_async(nfs, "pagefile", O_RDWR | O_CREAT, nfs_open_pagefile_cb, NULL); 
+    int ret = nfs_open_async(nfs, "pagefile", O_RDWR | O_CREAT | O_TRUNC, nfs_open_pagefile_cb, NULL); 
     ZF_LOGF_IF(ret != 0, "queuing open pagefile failed: %s", nfs_get_error(nfs));
 }
 
@@ -269,26 +272,36 @@ void nfs_open_pagefile_cb(int status, UNUSED struct nfs_context *nfs, void *data
 void nfs_pwrite_pagefile_cb(int status, UNUSED struct nfs_context *nfs, void *data, 
                   UNUSED void *private_data)
 {
+    nfs_pwrite_pagefile_cb_args_t *args = private_data;
+
     if (status < 0) {
-        ZF_LOGF("pwrite to pagefile failed with \"%s\"\n", (char *)data);
+        ZF_LOGE("pwrite to pagefile failed with \"%s\"\n", (char *)data);
+        args->bytes_written = 0;
+        seL4_Signal(args->ntfn);
+        return;
     }
 
-    nfs_pwrite_pagefile_cb_args_t *args = private_data;
     args->bytes_written = status;
     seL4_Signal(args->ntfn);
 }
 
 void nfs_pread_pagefile_cb(int status, UNUSED struct nfs_context *nfs, void *data, 
                   UNUSED void *private_data)
-{
+{   
+    nfs_pread_pagefile_cb_args_t *args = private_data;
+
     if (status < 0) {
-        ZF_LOGF("pread to pagefile failed with \"%s\"\n", (char *)data);
+        ZF_LOGF("pread from pagefile failed with \"%s\"\n", (char *)data);
+        args->bytes_read = 0;
+        seL4_Signal(args->ntfn);
+        return;
     }
 
-    nfs_pread_pagefile_cb_args_t *args = private_data;
     args->bytes_read = status;
-    // args->buf = data;
-    unsigned char *return_data = data;
-    memcpy((void *)args->buf, data, status);
+
+    if (status > 0) {
+        memcpy(args->buf, data, status);
+    }
+
     seL4_Signal(args->ntfn);
 }
