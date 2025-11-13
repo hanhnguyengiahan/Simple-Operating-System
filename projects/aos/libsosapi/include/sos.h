@@ -71,11 +71,15 @@ int sos_getdirent(int pos, char *name, size_t nbyte);
 /* Reads name of entry "pos" in directory into "name", max "nbyte" bytes.
  * Returns number of bytes returned, zero if "pos" is next free entry,
  * -1 if error (non-existent entry).
+ * 
+ * The function will make sure to include a null byte if it is not restricted by `nbyte`.
  */
 
 int sos_stat(const char *path, sos_stat_t *buf);
 /* Returns information about file "path" through "buf".
  * Returns 0 if successful, -1 otherwise (invalid name).
+   
+   This function assumes that the given path is null-terminated.
  */
 
 pid_t sos_process_create(const char *path);
