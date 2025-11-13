@@ -8,7 +8,7 @@
 #include "backtrace.h"
 #ifdef CONFIG_SOS_FRAME_LIMIT
 #define PAGES_QUEUE_MAX_SIZE    ((CONFIG_SOS_FRAME_LIMIT == 0ul) ? (1 << 19) : CONFIG_SOS_FRAME_LIMIT)
-#define OFFSET_QUEUE_MAX_SIZE   ((CONFIG_SOS_FRAME_LIMIT == 0ul) ? (1 << 19) : (CONFIG_SOS_FRAME_LIMIT * 10))
+#define OFFSET_QUEUE_MAX_SIZE   ((CONFIG_SOS_FRAME_LIMIT == 0ul) ? (1 << 19) : (CONFIG_SOS_FRAME_LIMIT * 150))
 #else
 #define PAGES_QUEUE_MAX_SIZE (1 << 19)
 #define OFFSET_QUEUE_MAX_SIZE = (1 << 19);
@@ -102,6 +102,9 @@ int swap_to_mem(page_metadata_t *page) {
     unsigned char *data = frame_data(frame_ref);
     read_from_pagefile(data, page);
 
+    /* return pagefile offset to queue */
+    sglib_offset_queue_t_add(&free_pagefile_offsets, page->pagefile_offset);
+
     /* allocate a slot to duplicate the frame cap so we can map it into the application */
     seL4_CPtr frame_cptr = cspace_alloc_slot(&cspace);
     if (frame_cptr == seL4_CapNull) {
@@ -143,7 +146,6 @@ static size_t free_pagefile_offsets_pop() {
             free_pagefile_offsets.eof_offset += PAGE_SIZE_4K;
             sglib_offset_queue_t_add(&free_pagefile_offsets, free_pagefile_offsets.eof_offset);
         }
-
         return available_offset;
     }
     ZF_LOGE("Free pagefile offset queue is empty!");
