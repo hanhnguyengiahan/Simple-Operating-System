@@ -517,7 +517,7 @@ void nfs_write_cb(int status, struct nfs_context *nfs, void *data, void *private
     seL4_Signal(worker_threads[thread_index]->ntfn);
     return;
 }
-#define BREAKDOWN_THRESHOLD 4096
+#define BREAKDOWN_THRESHOLD BIT(16)
 
 void handler_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index) {
     ZF_LOGV("syscall: write!\n");
@@ -556,16 +556,18 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index) {
     }
 
     size_t total_bytes_written = 0;
-    while (nbytes > 0) {
-        size_t bytes_to_write = MIN(BREAKDOWN_THRESHOLD, nbytes);
-        size_t bytes_written = 0;
 
-        unsigned char* temp_buf = malloc(bytes_to_write);
-        if (temp_buf == NULL) {
+    /* only need to allocate once with the biggest size it needs */
+    unsigned char* temp_buf = malloc(MIN(BREAKDOWN_THRESHOLD, nbytes));
+    if (temp_buf == NULL) {
             ZF_LOGE("Failed to allocate memory for temp_buf");
             seL4_SetMR(0, -1);
             return;
-        }
+    }
+
+    while (nbytes > 0) {
+        size_t bytes_to_write = MIN(BREAKDOWN_THRESHOLD, nbytes);
+        size_t bytes_written = 0;
 
         int status = copy_from_user(temp_buf, (void*)(buf_vaddr + total_bytes_written), bytes_to_write);
         if (status == -1) {
@@ -603,8 +605,9 @@ void handler_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index) {
 
         total_bytes_written += bytes_written;
         nbytes -= bytes_written;
-        free(temp_buf);
     }
+
+    free(temp_buf);
     seL4_SetMR(0, total_bytes_written);
     return;
 }
@@ -669,18 +672,20 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
     }
 
     size_t total_bytes_read = 0;
+
+    /* only need to allocate once with the biggest size it needs */
+    unsigned char *data = malloc(MIN(BREAKDOWN_THRESHOLD, nbytes));
+    if (data == NULL) {
+        ZF_LOGE("Failed to allocate memory");
+        seL4_SetMR(0, -1);
+        return;
+    }
+
     while (nbytes > 0) {
         size_t bytes_to_read = MIN(BREAKDOWN_THRESHOLD, nbytes);
         size_t bytes_read = 0;
         bool early_return = false;
         bool failed = false;
-
-        unsigned char *data = malloc(bytes_to_read);
-        if (data == NULL) {
-            ZF_LOGE("Failed to allocate memory");
-            seL4_SetMR(0, -1);
-            return;
-        }
 
         if (file_desc != CONSOLE_FD) { /* normal files */
             struct nfs_context *nfs_context = get_nfs_context();
@@ -690,6 +695,7 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
                             nfs_read_cb, (void*)&args);
             if (ret < 0) {
                 ZF_LOGE("Failed to queue nfs_read_async");
+                free(data);
                 seL4_SetMR(0, -1);
                 return;
             }
@@ -730,19 +736,21 @@ void handler_sos_read(seL4_MessageInfo_t *reply_msg, int thread_index) {
 
         total_bytes_read += bytes_read;
         nbytes -= bytes_read;
-        free(data);
 
         if (failed) { /* must check for failed before early_return because failing cases is more important (higher priority) then */
+            free(data);
             seL4_SetMR(0, -1);
             return;
         }
 
         if (early_return) {
+            free(data);
             seL4_SetMR(0, total_bytes_read);
             return;        
         }
     }
 
+    free(data);
     seL4_SetMR(0, total_bytes_read);
     return;
 }
