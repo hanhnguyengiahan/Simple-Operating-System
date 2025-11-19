@@ -12,8 +12,9 @@ seL4_MessageInfo_t handle_fault(seL4_MessageInfo_t tag, bool *have_reply, seL4_C
     seL4_Fault_t fault = seL4_getFault(tag);
     seL4_Uint64 fault_type = seL4_Fault_get_seL4_FaultType(fault);
 
+    user_process_t *user_process = get_current_user_process();
+
     switch (fault_type) {
-        
         case seL4_Fault_VMFault:
             ret = handle_vm_fault(fault, worker_thread_ntfn);
             break;
@@ -21,7 +22,7 @@ seL4_MessageInfo_t handle_fault(seL4_MessageInfo_t tag, bool *have_reply, seL4_C
             /* some kind of fault */
             debug_print_fault(tag, thread_name);
             /* dump registers too */
-            debug_dump_registers(user_process.tcb);
+            debug_dump_registers(user_process->tcb);
 
             ZF_LOGE("Unknown fault %lu\n", fault_type);
             break;

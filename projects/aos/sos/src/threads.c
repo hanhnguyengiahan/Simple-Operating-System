@@ -29,7 +29,7 @@
 #define SOS_THREAD_PRIORITY     (100)
 
 __thread sos_thread_t *current_thread = NULL;
-sos_thread_t *worker_threads[MAX_WORKER_THREADS] = {0};
+sos_thread_t *worker_threads[MAX_WORKER_THREADS];
 
 static seL4_CPtr sched_ctrl_start;
 static seL4_CPtr sched_ctrl_end;
@@ -46,6 +46,11 @@ void init_threads(seL4_CPtr _ipc_ep, seL4_CPtr _fault_ep, seL4_CPtr sched_ctrl_s
     sched_ctrl_end = sched_ctrl_end_;
 }
 
+uint64_t get_current_thread_id(void) {
+    uint64_t val;
+    asm volatile("mrs %0, tpidr_el0" : "=r"(val));
+    return val;
+}
 
 /* leaking a lot of memory if failed! */
 static bool alloc_stack(seL4_Word *sp)
@@ -85,6 +90,9 @@ int thread_resume(sos_thread_t *thread)
 /* trampoline code for newly started thread */
 static void thread_trampoline(sos_thread_t *thread, thread_main_f *function, void *arg, bool debugger_add)
 {
+    seL4_UserContext regs;
+    printf("thread id: %d\n", get_current_thread_id());
+
     sel4runtime_set_tls_base(thread->tls_base);
     seL4_SetIPCBuffer((seL4_IPCBuffer *) thread->ipc_buffer_vaddr);
     current_thread = thread;
@@ -101,7 +109,7 @@ static void thread_trampoline(sos_thread_t *thread, thread_main_f *function, voi
  *
  * TODO: fix memory leaks
  */
-sos_thread_t *thread_create(thread_main_f function, void *arg, seL4_Word badge, bool resume,
+sos_thread_t *thread_create(size_t thread_id, thread_main_f function, void *arg, seL4_Word badge, bool resume,
                             seL4_Word prio, seL4_CPtr bound_ntfn, bool debugger_add)
 {
     /* we allocate stack for additional sos threads
@@ -277,7 +285,9 @@ sos_thread_t *thread_create(thread_main_f function, void *arg, seL4_Word badge, 
         .x1 = (seL4_Word) function,
         .x2 = (seL4_Word) arg,
         .x3 = (seL4_Word) debugger_add,
+        .tpidr_el0 = thread_id
     };
+    
     ZF_LOGD(resume ? "Starting new sos thread at %p\n"
             : "Created new thread starting at %p\n", (void *) context.pc);
     fflush(NULL);
@@ -300,9 +310,9 @@ sos_thread_t *thread_create(thread_main_f function, void *arg, seL4_Word badge, 
 /*
  * Spawn the debugger thread. Should only be called once in debugger_init()
  */
-sos_thread_t *debugger_spawn(thread_main_f function, void *arg, seL4_Word badge, seL4_CPtr bound_ntfn)
+sos_thread_t *debugger_spawn(size_t thread_id, thread_main_f function, void *arg, seL4_Word badge, seL4_CPtr bound_ntfn)
 {
-    return thread_create(function, arg, badge, true, seL4_MaxPrio, bound_ntfn, false);
+    return thread_create(thread_id, function, arg, badge, true, seL4_MaxPrio, bound_ntfn, false);
 }
 
 
@@ -315,7 +325,7 @@ sos_thread_t *debugger_spawn(thread_main_f function, void *arg, seL4_Word badge,
  * Ensure that the badge you provide is unique (in that no other active thread has it). If you
  * do not ensure this, you will probably see some weird behaviour in GDB.
  */
-sos_thread_t *spawn(thread_main_f function, void *arg, seL4_Word badge, bool debugger_add)
+sos_thread_t *spawn( size_t thread_id, thread_main_f function, void *arg, seL4_Word badge, bool debugger_add)
 {
-    return thread_create(function, arg, badge, true, SOS_THREAD_PRIORITY, 0, debugger_add);
+    return thread_create(thread_id, function, arg, badge, true, SOS_THREAD_PRIORITY, 0, debugger_add);
 }

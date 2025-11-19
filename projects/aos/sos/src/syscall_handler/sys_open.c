@@ -7,12 +7,13 @@
 #include <sel4/sel4.h>
 
 void sos_open_callback(int err, struct nfs_context *nfs, void *data, void *private_data)
-{
+{   
+    user_process_t *user_process = get_current_user_process();
+
     sos_open_cb_args_t *ret_private_data = (sos_open_cb_args_t *)private_data;
-
-    int thread_index = ret_private_data->thread_index;
-    int fd = ret_private_data->fd;
-
+    int thread_index        = ret_private_data->thread_index;
+    int fd                  = ret_private_data->fd;
+    
     if (err < 0)
     {
         ZF_LOGE("error: %d, error msg: %s\n", err, (char *)data);
@@ -22,14 +23,16 @@ void sos_open_callback(int err, struct nfs_context *nfs, void *data, void *priva
     }
 
     struct nfsfh *nfsfh = (struct nfsfh *)data;
-    user_process.vfs->fd_table[fd].fh = nfsfh;
+    user_process->vfs->fd_table[fd].fh = nfsfh;
 
     seL4_Signal(worker_threads[thread_index]->ntfn);
 }
 
 int handle_sos_open_nwcs(fmode_t mode)
 {
-    sos_fd_t *console = &user_process.vfs->fd_table[CONSOLE_FD];
+    user_process_t *user_process = get_current_user_process();
+
+    sos_fd_t *console = &user_process->vfs->fd_table[CONSOLE_FD];
 
     bool has_reader = (console->mode == O_RDONLY || console->mode == O_RDWR);
     switch (mode)
@@ -49,14 +52,16 @@ int handle_sos_open_nwcs(fmode_t mode)
 
 void handle_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index)
 {
-    // ZF_LOGV("syscall: open!\n");
+    ZF_LOGV("syscall: open!\n");
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
+
+    user_process_t *user_process = get_current_user_process();
 
     uintptr_t path_vaddr = seL4_GetMR(1);
     size_t path_len = seL4_GetMR(2);
     fmode_t mode = seL4_GetMR(3);
 
-    unsigned char *path_data = find_frame_data(path_vaddr, user_process.page_global_directory);
+    unsigned char *path_data = find_frame_data(path_vaddr, user_process->page_global_directory);
     if (!path_data)
     {
         seL4_SetMR(0, -1);
@@ -87,7 +92,7 @@ void handle_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index)
         return;
     }
 
-    int fd = find_next_fd(user_process.vfs);
+    int fd = find_next_fd(user_process->vfs);
 
     if (fd >= PROCESS_MAX_FILES)
     {
@@ -134,9 +139,9 @@ void handle_sos_open(seL4_MessageInfo_t *reply_msg, int thread_index)
         return;
     }
 
-    user_process.vfs->fd_table[fd].is_opened = true;
-    user_process.vfs->fd_table[fd].mode = mode;
-    user_process.vfs->fd_table[fd].path = temp_path_buf;
+    user_process->vfs->fd_table[fd].is_opened = true;
+    user_process->vfs->fd_table[fd].mode = mode;
+    user_process->vfs->fd_table[fd].path = temp_path_buf;
 
     seL4_SetMR(0, fd);
 }

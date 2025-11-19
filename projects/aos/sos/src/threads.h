@@ -19,6 +19,7 @@
 extern cspace_t cspace;
 
 typedef struct {
+    pid_t assigned_pid;
     ut_t *tcb_ut;
     seL4_CPtr tcb;
 
@@ -49,9 +50,10 @@ extern __thread sos_thread_t *current_thread;
 extern sos_thread_t *worker_threads[MAX_WORKER_THREADS];
 
 void init_threads(seL4_CPtr ipc_ep, seL4_CPtr fault_ep, seL4_CPtr sched_ctrl_start_, seL4_CPtr sched_ctrl_end_);
-sos_thread_t *spawn(thread_main_f function, void *arg, seL4_Word badge, bool debugger_add);
-sos_thread_t *debugger_spawn(thread_main_f function, void *arg, seL4_Word badge, seL4_CPtr bound_ntfn);
-sos_thread_t *thread_create(thread_main_f function, void *arg, seL4_Word badge, bool resume, seL4_Word prio, 
+sos_thread_t *spawn(size_t thread_id, thread_main_f function, void *arg, seL4_Word badge, bool debugger_add);
+sos_thread_t *debugger_spawn(size_t thread_id, thread_main_f function, void *arg, seL4_Word badge, seL4_CPtr bound_ntfn);
+sos_thread_t *thread_create(size_t thread_id, thread_main_f function, void *arg, seL4_Word badge, bool resume, seL4_Word prio, 
                             seL4_CPtr bound_ntfn, bool debugger_add);
 int thread_suspend(sos_thread_t *thread);
 int thread_resume(sos_thread_t *thread);
+uint64_t get_current_thread_id(void);

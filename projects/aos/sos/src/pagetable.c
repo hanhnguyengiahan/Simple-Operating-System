@@ -245,6 +245,8 @@ page_metadata_t *find_page(uintptr_t vaddr, pgd_t *pgd) {
     size_t pd_index = get_pd_bits(vaddr);
     size_t pt_index = get_pt_bits(vaddr);
 
+    user_process_t *user_process = get_current_user_process();
+
     pud_t* pud = pgd->page_upper_directories[pgd_index];
     if (!pud) {
         ZF_LOGE("%s does not exist", PAGE_UPPER_DIRECTORY_NAME);
@@ -268,8 +270,7 @@ page_metadata_t *find_page(uintptr_t vaddr, pgd_t *pgd) {
         if (page->pagefile_offset != -1) {   /* page is on disk */
             ret = swap_to_mem(page);
         } else {                             /* page is still in memory */
-            // printf("page is still in memory with reference bit = %d!!\n", page->reference_bit);
-            ret = reference_page(page, user_process.vspace, vaddr, page->rights);
+            ret = reference_page(page, user_process->vspace, vaddr, page->rights);
         }
     }
     
