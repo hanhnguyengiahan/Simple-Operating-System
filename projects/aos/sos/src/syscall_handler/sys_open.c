@@ -8,11 +8,11 @@
 
 void sos_open_callback(int err, struct nfs_context *nfs, void *data, void *private_data)
 {   
-    user_process_t *user_process = get_current_user_process();
 
     sos_open_cb_args_t *ret_private_data = (sos_open_cb_args_t *)private_data;
     int thread_index        = ret_private_data->thread_index;
     int fd                  = ret_private_data->fd;
+    user_process_t *user_process = get_current_user_process_by_thread(thread_index);
     
     if (err < 0)
     {
