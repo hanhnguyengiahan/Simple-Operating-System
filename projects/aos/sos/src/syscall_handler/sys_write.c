@@ -26,6 +26,8 @@ void handle_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index)
 
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
 
+    user_process_t *user_process = get_current_user_process();
+
     uintptr_t buf_vaddr = seL4_GetMR(1);
     size_t nbytes = seL4_GetMR(2);
     int file_desc = seL4_GetMR(3);
@@ -37,15 +39,15 @@ void handle_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index)
         return;
     }
 
-    if (!user_process.vfs->fd_table[file_desc].is_opened)
+    if (!user_process->vfs->fd_table[file_desc].is_opened)
     {
         ZF_LOGE("File %zu is not open yet!", file_desc);
         seL4_SetMR(0, -1);
         return;
     }
 
-    if (user_process.vfs->fd_table[file_desc].mode != O_WRONLY &&
-        user_process.vfs->fd_table[file_desc].mode != O_RDWR)
+    if (user_process->vfs->fd_table[file_desc].mode != O_WRONLY &&
+        user_process->vfs->fd_table[file_desc].mode != O_RDWR)
     {
         ZF_LOGE("File %zu is not open to write!", file_desc);
         seL4_SetMR(0, -1);
@@ -54,7 +56,7 @@ void handle_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index)
 
     if (file_desc != CONSOLE_FD)
     { /* normal files */
-        if (user_process.vfs->fd_table[file_desc].fh == NULL)
+        if (user_process->vfs->fd_table[file_desc].fh == NULL)
         {
             ZF_LOGE("NFS file handle for fd=%d does not exist", file_desc);
             seL4_SetMR(0, -1);
@@ -91,7 +93,7 @@ void handle_sos_write(seL4_MessageInfo_t *reply_msg, size_t thread_index)
             struct nfs_context *nfs_context = get_nfs_context();
 
             nfs_write_cb_args_t args = {.thread_index = thread_index};
-            int ret = nfs_write_async(nfs_context, user_process.vfs->fd_table[file_desc].fh, bytes_to_write, (const void *)temp_buf,
+            int ret = nfs_write_async(nfs_context, user_process->vfs->fd_table[file_desc].fh, bytes_to_write, (const void *)temp_buf,
                                       nfs_write_cb, (void *)&args);
             if (ret < 0)
             {

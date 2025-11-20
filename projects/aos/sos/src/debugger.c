@@ -396,7 +396,7 @@ void debugger_deregister_thread(seL4_CPtr ep, seL4_Word badge) {
  *
  * TODO: fix memory leaks
  */
-seL4_Error debugger_init(cspace_t *cspace, seL4_IRQControl irq_control, seL4_CPtr recv_ep) {
+seL4_Error debugger_init(size_t thread_id, cspace_t *cspace, seL4_IRQControl irq_control, seL4_CPtr recv_ep) {
     /* Create a reply object */
     seL4_CPtr reply;
     ut_t *reply_ut = alloc_retype(&reply, seL4_ReplyObject, seL4_ReplyBits);
@@ -474,7 +474,7 @@ seL4_Error debugger_init(cspace_t *cspace, seL4_IRQControl irq_control, seL4_CPt
         .reply = reply
     };
 
-    debugger_thread = debugger_spawn(debugger_main, NULL, 0, bound_ntfn);
+    debugger_thread = debugger_spawn(thread_id, debugger_main, NULL, 0, bound_ntfn);
     if (debugger_thread == NULL) {
         return ENOMEM;
     }

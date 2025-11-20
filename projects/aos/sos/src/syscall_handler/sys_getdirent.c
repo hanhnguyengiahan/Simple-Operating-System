@@ -7,16 +7,18 @@ extern sos_thread_t *worker_threads[MAX_WORKER_THREADS];
 
 void nfs_opendir_cb(int status, struct nfs_context *nfs, void *data, void *private_data)
 {
+    int thread_index = ((nfs_opendir_cb_args_t *)private_data)->thread_index;
+
+    user_process_t *user_process = get_current_user_process_by_thread(thread_index);
+
     if (status < 0)
     {
-        user_process.curr_dir = NULL;
+        user_process->curr_dir = NULL;
         ZF_LOGE("nfs_opendir failed with error: %s\n", (char *)data);
         return;
     }
 
-    user_process.curr_dir = (struct nfsdir *)data;
-
-    int thread_index = ((nfs_opendir_cb_args_t *)private_data)->thread_index;
+    user_process->curr_dir = (struct nfsdir *)data;
     seL4_Signal(worker_threads[thread_index]->ntfn);
 
     return;
@@ -26,6 +28,8 @@ void handle_sos_getdirent(seL4_MessageInfo_t *reply_msg, int thread_index)
 {
     ZF_LOGV("syscall: getdirent!\n");
     *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
+
+    user_process_t *user_process = get_current_user_process();
 
     size_t pos = seL4_GetMR(1);
     uintptr_t buf_vaddr = seL4_GetMR(2);
@@ -49,7 +53,7 @@ void handle_sos_getdirent(seL4_MessageInfo_t *reply_msg, int thread_index)
     struct nfsdirent *nfsdirent;
     for (size_t i = 0; i <= pos; ++i)
     {
-        nfsdirent = nfs_readdir(nfs_context, user_process.curr_dir);
+        nfsdirent = nfs_readdir(nfs_context, user_process->curr_dir);
         if (nfsdirent == NULL)
         {
             if (i == pos)

@@ -167,8 +167,9 @@ static int stack_write(seL4_Word *mapped_stack, int index, uintptr_t val)
 
 /* set up System V ABI compliant stack, so that the process can
  * start up and initialise the C library */
-static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, elf_t *elf_file)
+static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, elf_t *elf_file, pid_t pid)
 {
+    user_process_t *user_process = user_processes[pid];
     /* virtual addresses in the target process' address space */
     uintptr_t stack_top = PROCESS_STACK_TOP;
     uintptr_t stack_bottom = PROCESS_STACK_TOP - PAGE_SIZE_4K;
@@ -184,9 +185,9 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
     }
 
     /* allocate a stack frame for the user application*/
-    seL4_Error err = alloc_map_frame(cspace, stack_bottom, &user_process, seL4_ReadWrite);
-    page_metadata_t *page = find_page(stack_bottom, user_process.page_global_directory);
-    user_process.stack = page->frame_cap;
+    seL4_Error err = alloc_map_frame(cspace, stack_bottom, user_process, seL4_ReadWrite);
+    page_metadata_t *page = find_page(stack_bottom, user_process->page_global_directory);
+    user_process->stack = page->frame_cap;
 
     /* allocate a slot to duplicate the stack frame cap so we can map it into our address space */
     seL4_CPtr local_stack_cptr = cspace_alloc_slot(cspace);
@@ -196,7 +197,7 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
     }
 
     /* copy the stack frame cap into the slot */
-    err = cspace_copy(cspace, local_stack_cptr, cspace, user_process.stack, seL4_AllRights);
+    err = cspace_copy(cspace, local_stack_cptr, cspace, user_process->stack, seL4_AllRights);
     if (err != seL4_NoError) {
         cspace_free_slot(cspace, local_stack_cptr);
         ZF_LOGE("Failed to copy cap");
@@ -263,19 +264,19 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
     /* Exend the stack with extra pages */
     for (int page = 0; page < INITIAL_PROCESS_STACK_PAGES; page++) {
         stack_bottom -= PAGE_SIZE_4K;
-        int result = alloc_map_frame(cspace, stack_bottom, &user_process, seL4_ReadWrite);
+        int result = alloc_map_frame(cspace, stack_bottom, user_process, seL4_ReadWrite);
         if (result != 0) {
             ZF_LOGE("Unable to allocate a new frame at %p!\n", (void*)stack_bottom);
             return 0;
         }
     }
     /* Create a stack region */
-    user_process.stack_region = add_vm_region(user_process.vm_regions, stack_top, MAX_PROCESS_STACK_PAGES * PAGE_SIZE_4K, seL4_ReadWrite, true);
-    if (user_process.stack_region == NULL) {
+    user_process->stack_region = add_vm_region(user_process->vm_regions, stack_top, MAX_PROCESS_STACK_PAGES * PAGE_SIZE_4K, seL4_ReadWrite, true);
+    if (user_process->stack_region == NULL) {
         ZF_LOGE("Unable to add stack region");
         return 0;
     }
-    user_process.guard_page_vaddr = stack_bottom - PAGE_SIZE_4K;
+    user_process->guard_page_vaddr = stack_bottom - PAGE_SIZE_4K;
     return stack_top;
 }
 
@@ -285,109 +286,114 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
  * TODO: avoid leaking memory once you implement real processes, otherwise a user
  *       can force your OS to run out of memory by creating lots of failed processes.
  */
-bool start_first_process(char *app_name, seL4_CPtr ep)
-{
+bool start_first_process(char *app_name, seL4_CPtr ep, pid_t pid)
+{      
+    user_process_t *user_process = user_processes[pid];
     /* Create a VSpace */
-    user_process.vspace_ut = alloc_retype(&user_process.vspace, seL4_ARM_PageGlobalDirectoryObject,
+    user_process->vspace_ut = alloc_retype(&user_process->vspace, seL4_ARM_PageGlobalDirectoryObject,
                                               seL4_PGDBits);
-    if (user_process.vspace_ut == NULL) {
+    if (user_process->vspace_ut == NULL) {
         return false;
     }
 
     /* assign the vspace to an asid pool */
-    seL4_Word err = seL4_ARM_ASIDPool_Assign(seL4_CapInitThreadASIDPool, user_process.vspace);
+    seL4_Word err = seL4_ARM_ASIDPool_Assign(seL4_CapInitThreadASIDPool, user_process->vspace);
     if (err != seL4_NoError) {
         ZF_LOGE("Failed to assign asid pool");
         return false;
     }
 
     /* Create a simple 1 level CSpace */
-    err = cspace_create_one_level(&cspace, &user_process.cspace);
+    err = cspace_create_one_level(&cspace, &user_process->cspace);
     if (err != CSPACE_NOERROR) {
         ZF_LOGE("Failed to create cspace");
         return false;
     }
     
     /* Initialise the virtual file system */
-    user_process.vfs = malloc(sizeof(vfs_t));
-    vfs_init(user_process.vfs);
+    user_process->vfs = malloc(sizeof(vfs_t));
+    if (!user_process->vfs) {
+        ZF_LOGE("Failed to alloc vfs");
+        return false;
+    }
+    vfs_init(user_process->vfs);
 
     /* Initialise a linked list of frame refs */
-    user_process.page_global_directory = create_pgd();
-    if (!user_process.page_global_directory) {
+    user_process->page_global_directory = create_pgd();
+    if (!user_process->page_global_directory) {
         ZF_LOGE("Failed to alloc page global directory");
         return false;
     }
 
     /* Initialise a linked list of vm_regions */
-    user_process.vm_regions = malloc(sizeof(list_t));
-    if (!user_process.vm_regions) {
+    user_process->vm_regions = malloc(sizeof(list_t));
+    if (!user_process->vm_regions) {
         ZF_LOGE("Failed to alloc vm regions");
         return false;
     }
-    list_init(user_process.vm_regions);
+    list_init(user_process->vm_regions);
 
     /* Create an IPC buffer */
-    err = alloc_map_frame(&cspace, PROCESS_IPC_BUFFER, &user_process, seL4_AllRights);
+    err = alloc_map_frame(&cspace, PROCESS_IPC_BUFFER, user_process, seL4_AllRights);
     if (err != 0) {
         ZF_LOGE("Unable to map IPC buffer for user app");
         return false;
     }
 
     /* Keep track of IPC buffer region */
-    vm_region_t *ipc_region = add_vm_region(user_process.vm_regions, PROCESS_IPC_BUFFER, PAGE_SIZE_4K, seL4_AllRights, false);
+    vm_region_t *ipc_region = add_vm_region(user_process->vm_regions, PROCESS_IPC_BUFFER, PAGE_SIZE_4K, seL4_AllRights, false);
     if (ipc_region == NULL) {
         ZF_LOGE("Unable to add ipc region");
         return false;
     }
 
     /* Saves the IPC buffer capability */
-    page_metadata_t *page_metadata = find_page(PROCESS_IPC_BUFFER, user_process.page_global_directory);
-    user_process.ipc_buffer = page_metadata->frame_cap;
+    page_metadata_t *page_metadata = find_page(PROCESS_IPC_BUFFER, user_process->page_global_directory);
+    user_process->ipc_buffer = page_metadata->frame_cap;
 
     /* allocate a new slot in the target cspace which we will mint a badged endpoint cap into --
      * the badge is used to identify the process, which will come in handy when you have multiple
      * processes. */
-    seL4_CPtr user_ep = cspace_alloc_slot(&user_process.cspace);
+    seL4_CPtr user_ep = cspace_alloc_slot(&user_process->cspace);
     if (user_ep == seL4_CapNull) {
         ZF_LOGE("Failed to alloc user ep slot");
         return false;
     }
 
     /* now mutate the cap, thereby setting the badge */
-    err = cspace_mint(&user_process.cspace, user_ep, &cspace, ep, seL4_AllRights, APP_EP_BADGE);
+    err = cspace_mint(&user_process->cspace, user_ep, &cspace, ep, seL4_AllRights, APP_EP_BADGE);
     if (err) {
         ZF_LOGE("Failed to mint user ep");
         return false;
     }
 
     /* Create a new TCB object */
-    user_process.tcb_ut = alloc_retype(&user_process.tcb, seL4_TCBObject, seL4_TCBBits);
-    if (user_process.tcb_ut == NULL) {
+    user_process->tcb_ut = alloc_retype(&user_process->tcb, seL4_TCBObject, seL4_TCBBits);
+    if (user_process->tcb_ut == NULL) {
         ZF_LOGE("Failed to alloc tcb ut");
         return false;
     }
 
     /* Configure the TCB */
-    err = seL4_TCB_Configure(user_process.tcb,
-                             user_process.cspace.root_cnode, seL4_NilData,
-                             user_process.vspace, seL4_NilData, PROCESS_IPC_BUFFER,
-                             user_process.ipc_buffer);
+    err = seL4_TCB_Configure(user_process->tcb,
+                             (user_process->cspace).root_cnode, seL4_NilData,
+                             user_process->vspace, seL4_NilData, PROCESS_IPC_BUFFER,
+                             user_process->ipc_buffer);
     if (err != seL4_NoError) {
         ZF_LOGE("Unable to configure new TCB");
         return false;
     }
 
     /* Create scheduling context */
-    user_process.sched_context_ut = alloc_retype(&user_process.sched_context, seL4_SchedContextObject,
+    user_process->sched_context_ut = alloc_retype(&user_process->sched_context, seL4_SchedContextObject,
                                                      seL4_MinSchedContextBits);
-    if (user_process.sched_context_ut == NULL) {
+    if (user_process->sched_context_ut == NULL) {
         ZF_LOGE("Failed to alloc sched context ut");
         return false;
     }
 
     /* Configure the scheduling context to use the first core with budget equal to period */
-    err = seL4_SchedControl_Configure(sched_ctrl_start, user_process.sched_context, US_IN_MS, US_IN_MS, 0, 0);
+    err = seL4_SchedControl_Configure(sched_ctrl_start, user_process->sched_context, US_IN_MS, US_IN_MS, 0, 0);
     if (err != seL4_NoError) {
         ZF_LOGE("Unable to configure scheduling context");
         return false;
@@ -397,15 +403,15 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
      * In MCS, fault end point needed here should be in current thread's cspace.
      * NOTE this will use the unbadged ep unlike above, you might want to mint it with a badge
      * so you can identify which thread faulted in your fault handler */
-    err = seL4_TCB_SetSchedParams(user_process.tcb, seL4_CapInitThreadTCB, seL4_MinPrio, APP_PRIORITY,
-                                  user_process.sched_context, ep);
+    err = seL4_TCB_SetSchedParams(user_process->tcb, seL4_CapInitThreadTCB, seL4_MinPrio, APP_PRIORITY,
+                                  user_process->sched_context, ep);
     if (err != seL4_NoError) {
         ZF_LOGE("Unable to set scheduling params");
         return false;
     }
 
     /* Provide a name for the thread -- Helpful for debugging */
-    NAME_THREAD(user_process.tcb, app_name);
+    NAME_THREAD(user_process->tcb, app_name);
 
     /* parse the cpio image */
     ZF_LOGI("\nStarting \"%s\"...\n", app_name);
@@ -424,10 +430,10 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
     }
 
     /* set up the stack */
-    seL4_Word sp = init_process_stack(&cspace, seL4_CapInitThreadVSpace, &elf_file);
+    seL4_Word sp = init_process_stack(&cspace, seL4_CapInitThreadVSpace, &elf_file, pid);
 
     /* load the elf image from the cpio file */
-    err = elf_load(&cspace, &elf_file, &user_process);
+    err = elf_load(&cspace, &elf_file, user_process);
     if (err) {
         ZF_LOGE("Failed to load elf image");
         return false;
@@ -439,7 +445,7 @@ bool start_first_process(char *app_name, seL4_CPtr ep)
         .sp = sp,
     };
     printf("Starting %s at %p\n", APP_NAME, (void *) context.pc);
-    err = seL4_TCB_WriteRegisters(user_process.tcb, 1, 0, 2, &context);
+    err = seL4_TCB_WriteRegisters(user_process->tcb, 1, 0, 2, &context);
     ZF_LOGE_IF(err, "Failed to write registers");
     return err == seL4_NoError;
 }
@@ -529,6 +535,41 @@ void nfs_call_loop(seL4_CPtr ep, bool *condition_on_wait) {
     free_cap(reply_ut, reply);
 }
 
+void start_first_process_then_loop(void *arg) {
+    struct syscall_loop_args *args = arg;
+    /* Start user process */
+    printf("Start first process\n");
+    bool success = start_first_process(APP_NAME, args->ep, worker_threads[0]->assigned_pid);
+    ZF_LOGF_IF(!success, "Failed to start first process");
+    syscall_loop(arg);
+}
+
+sos_thread_t* create_worker_thread(size_t thread_id, thread_main_f *function, bool start_execution) {
+    /* Create a notification object */
+    seL4_CPtr thread_ntfn;
+    ut_t *ut = create_cap(&thread_ntfn, seL4_NotificationObject, seL4_NotificationBits);
+    
+    /* Start the worker thread */
+    struct syscall_loop_args *worker_sys_loop_args = malloc(sizeof(struct syscall_loop_args));
+
+    sos_thread_t* thread = thread_create(thread_id, function, worker_sys_loop_args, thread_id + 1, false, seL4_MinPrio, thread_ntfn, true);
+    ZF_LOGF_IF(!thread, "Failed to create worker thread");
+
+    /* worker thread's IPC EP is created within the `thread_create` function */
+    worker_sys_loop_args->ep = thread->ipc_ep;
+    worker_sys_loop_args->thread_index = thread_id;
+
+    /* start execution */
+    if (start_execution) {
+        thread_resume(thread);
+    }
+
+    /* store the worker thread */
+    worker_threads[thread_id] = thread;
+    return thread;
+}
+
+
 NORETURN void *main_continued(UNUSED void *arg)
 {
     /* Initialise other system compenents here */
@@ -583,7 +624,7 @@ NORETURN void *main_continued(UNUSED void *arg)
 
 #ifdef CONFIG_SOS_GDB_ENABLED
     /* Initialize the debugger */
-    seL4_Error debug_err = debugger_init(&cspace, seL4_CapIRQControl, gdb_recv_ep);
+    seL4_Error debug_err = debugger_init(DEBUGGER_THREAD_ID, &cspace, seL4_CapIRQControl, gdb_recv_ep);
     ZF_LOGF_IF(debug_err, "Failed to initialize debugger %d", debug_err);
     char secret_string[15] = "Welcome to AOS!";
 #endif /* CONFIG_SOS_GDB_ENABLED */
@@ -591,9 +632,8 @@ NORETURN void *main_continued(UNUSED void *arg)
     /* Initialises the timer */
     printf("Timer init\n");
     start_timer(timer_vaddr);
-    /* You will need to register an IRQ handler for the timer here.
-     * See "irq.h". */
 
+    /* Register an IRQ handler for the timer here. See "irq.h". */
     seL4_Word irq_number = meson_timeout_irq(MESON_TIMER_A);
     bool edge_triggered = true;
     seL4_IRQHandler irq_handler = 0;
@@ -602,49 +642,45 @@ NORETURN void *main_continued(UNUSED void *arg)
     ZF_LOGF_IF(init_irq_err != 0, "Failed to initialise IRQ");
     seL4_IRQHandler_Ack(irq_handler);
 
-    /*  Create a thread pool */
-    for (size_t i = 0; i < MAX_WORKER_THREADS; ++i) {
-        /* Create a notification object */
-        seL4_CPtr thread_ntfn;
-        ut_t *ut = create_cap(&thread_ntfn, seL4_NotificationObject, seL4_NotificationBits);
-        
-        /* Start the worker thread */
-        struct syscall_loop_args *worker_sys_loop_args = malloc(sizeof(struct syscall_loop_args));
-        ZF_LOGF_IF(!worker_sys_loop_args, "Failed to allocate memory to worker_sys_loop_args");
-
-        sos_thread_t* thread = thread_create(syscall_loop, worker_sys_loop_args, i + 1, false, seL4_MinPrio, thread_ntfn, true);
-        
-        // worker thread IPC EP is created within 
-        worker_sys_loop_args->ep = thread->ipc_ep;
-        worker_sys_loop_args->thread_index = i;
-        thread_resume(thread);
-
-        worker_threads[i] = thread;
+    /* Create a pool of user processes */
+    for (size_t i = 0; i < MAX_NUM_PROCESSES; i++) {
+        user_processes[i] = malloc(sizeof(user_process_t));
+        ZF_LOGF_IF(!user_processes[i], "Failed to malloc user_process_t for index %zu", i);
     }
 
-    /* Worker thread for handling interrupts */
-    struct syscall_loop_args *interrupts_handler_args = malloc(sizeof(struct syscall_loop_args));
-    ZF_LOGF_IF(!interrupts_handler_args, "Failed to allocate memory to interrupts_handler_args");
+    /* Initialize free PIDs queue */
+    init_free_pids();
 
-    interrupts_handler_args->ep = ipc_ep;
+    /*  Create a thread pool */
+    for (size_t id = 1; id < MAX_WORKER_THREADS; ++id) {
+        create_worker_thread(id, syscall_loop, true);
+    }
 
+    /* Create a worker thread for handling interrupts */
+    struct syscall_loop_args interrupts_handler_args = { .ep = ipc_ep, .thread_index = -1 };
+    
     // unbinds ntfn from init thread TCB, because we're going to bind ntfn to the interrupts handler thread
     seL4_Error err = seL4_TCB_UnbindNotification(seL4_CapInitThreadTCB);
     ZF_LOGF_IF(err != seL4_NoError, "Failed to unbind notification from init thread TCB, seL4_Error=%d", err);
+    
+    sos_thread_t* interrupt_thread = thread_create(SOS_INTERRUPT_THREAD_ID, syscall_loop, &interrupts_handler_args, SOS_INTERRUPT_THREAD_ID + 1, true, seL4_MaxPrio, ntfn, true);
+    ZF_LOGF_IF(!interrupt_thread, "Failed to create interrupt thread");
 
-    thread_create(syscall_loop, interrupts_handler_args, MAX_WORKER_THREADS + 1, true, seL4_MaxPrio, ntfn, true);
+    /* Create the bootstrap thread. It will load the first user process, then transition into the syscall loop. */
+    sos_thread_t *boostrap_thread = create_worker_thread(SOS_BOOTSTRAP_THREAD_ID, start_first_process_then_loop, false);
+    
+    /* Assigned PID to the boostrap thread */
+    sos_pid_t available_pid = get_available_pid();
+    boostrap_thread->assigned_pid = available_pid;
 
-    /* Start user process */
-    printf("Start first process\n");
-    bool success = start_first_process(APP_NAME, worker_threads[0]->ipc_ep);
-    ZF_LOGF_IF(!success, "Failed to start first process");
-    struct syscall_loop_args *main_thread_args = malloc(sizeof(struct syscall_loop_args));
-    ZF_LOGF_IF(!main_thread_args, "Failed to allocate memory to main_thread_args");
-
+    /* Resume the bootstrap thread so it can begin loading the initial user process. */
+    thread_resume(boostrap_thread);
+    
+    /* Enter the syscall loop on the main thread to keep SOS running */
     seL4_CPtr main_thread_ipc_ep;
     create_cap(&main_thread_ipc_ep, seL4_EndpointObject, seL4_EndpointBits);
-    main_thread_args->ep = ipc_ep;
-    syscall_loop(main_thread_args);
+    struct syscall_loop_args main_thread_args = { .ep = main_thread_ipc_ep, .thread_index = -1 };
+    syscall_loop(&main_thread_args);
 }
 /*
  * Main entry point - called by crt.
