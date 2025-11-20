@@ -12,6 +12,7 @@
 #include "utils.h"
 #include "mutex.h"
 #include <stddef.h>
+#include "ut.h"
 #include <cspace/cspace.h>
 
 /** \brief Atomically increment an integer, accounting for possible overflow.
@@ -161,6 +162,7 @@ static inline int sync_bin_sem_new(sync_bin_sem_t *sem, int value)
     if (!ut) {
         return -1;
     } else {
+        sem->notification_ut = ut;
         return sync_bin_sem_init(sem, sem->notification, value);
     }
 }
@@ -174,8 +176,10 @@ static inline int sync_bin_sem_destroy(sync_bin_sem_t *sem)
         ZF_LOGE("Semaphore passed to sync_bin_sem_destroy was NULL");
         return -1;
     }
+
     cspace_delete(&cspace, sem->notification);
     cspace_free_slot(&cspace, sem->notification);
+    ut_free(sem->notification_ut);
     return 0;
 }
 

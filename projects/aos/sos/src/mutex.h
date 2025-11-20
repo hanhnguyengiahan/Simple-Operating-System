@@ -2,6 +2,7 @@
 
 typedef struct {
     seL4_CPtr notification;
+    ut_t *notification_ut;
     volatile int value;
 } sync_bin_sem_t;
 
