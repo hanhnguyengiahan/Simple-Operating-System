@@ -164,6 +164,7 @@ static size_t free_pagefile_offsets_pop() {
             free_pagefile_offsets.eof_offset += PAGE_SIZE_4K;
             sglib_offset_queue_t_add(&free_pagefile_offsets, free_pagefile_offsets.eof_offset);
         }
+        sync_mutex_unlock(&free_pagefile_offsets_mutex);
         return available_offset;
     }
 
