@@ -250,12 +250,14 @@ static void read_from_pagefile(unsigned char* buf, page_metadata_t *page_metadat
 }
 
 void evict_page() {
+    sync_mutex_lock(in_memory_pages_mutex);
     while (!sglib_pages_queue_t_is_empty(&in_memory_pages)) {
-        page_metadata_t *page = in_memory_pages_pop();
+        page_metadata_t *page = sglib_pages_queue_t_first_element(&in_memory_pages);
+        sglib_pages_queue_t_delete_first(&in_memory_pages);
 
         if (page->reference_bit == 1) { /* give it a second chance */
             page->reference_bit = 0;
-            in_memory_pages_add(page);
+            sglib_pages_queue_t_add(&in_memory_pages, page);
 
             // unmap the page so that we can simulate the reference bit via vm fault
             seL4_Error err = seL4_ARM_Page_Unmap(page->frame_cap);
@@ -270,6 +272,7 @@ void evict_page() {
             break;
         }
     }
+    sync_mutex_unlock(in_memory_pages_mutex);
 }
 
 seL4_Error reference_page(page_metadata_t *page, seL4_CPtr vspace, seL4_Word vaddr, seL4_CapRights_t rights) {
