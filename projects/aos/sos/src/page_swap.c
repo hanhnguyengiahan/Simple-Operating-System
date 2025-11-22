@@ -147,10 +147,12 @@ void in_memory_pages_add(page_metadata_t *page) {
 
 page_metadata_t *in_memory_pages_pop() {
     sync_mutex_lock(in_memory_pages_mutex);
-
+    
+    page_metadata_t *page = sglib_pages_queue_t_first_element(&in_memory_pages);
     sglib_pages_queue_t_delete_first(&in_memory_pages);
     
     sync_mutex_unlock(in_memory_pages_mutex);
+    return page;
 }
 
 static size_t free_pagefile_offsets_pop() {
@@ -249,8 +251,7 @@ static void read_from_pagefile(unsigned char* buf, page_metadata_t *page_metadat
 
 void evict_page() {
     while (!sglib_pages_queue_t_is_empty(&in_memory_pages)) {
-        page_metadata_t *page = sglib_pages_queue_t_first_element(&in_memory_pages);
-        in_memory_pages_pop();
+        page_metadata_t *page = in_memory_pages_pop();
 
         if (page->reference_bit == 1) { /* give it a second chance */
             page->reference_bit = 0;
