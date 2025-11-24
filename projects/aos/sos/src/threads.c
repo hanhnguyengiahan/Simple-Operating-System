@@ -45,6 +45,15 @@ void init_threads(seL4_CPtr _ipc_ep, seL4_CPtr _fault_ep, seL4_CPtr sched_ctrl_s
     sched_ctrl_end = sched_ctrl_end_;
 }
 
+sos_thread_t *get_available_worker_thread() {
+    for (int i = 0; i < MAX_WORKER_THREADS; ++i) {
+        if (worker_threads[i]->assigned_pid == -1) {
+            return worker_threads[i];
+        }
+    }
+    return NULL;
+}
+
 /* leaking a lot of memory if failed! */
 static bool alloc_stack(seL4_Word *sp)
 {

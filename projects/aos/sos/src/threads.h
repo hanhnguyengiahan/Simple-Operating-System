@@ -22,7 +22,7 @@ extern cspace_t cspace;
 
 typedef struct {
     sos_pid_t assigned_pid;
-    uint32_t thread_id;
+    sos_pid_t thread_id;
     
     ut_t *tcb_ut;
     seL4_CPtr tcb;
@@ -49,8 +49,8 @@ typedef struct {
 
 typedef void thread_main_f(void *);
 
-#define MAX_WORKER_THREADS      16
-#define SOS_BOOTSTRAP_THREAD_ID 0
+#define MAX_WORKER_THREADS      2 /* worker threads will have IDs within [0, MAX_WORKER_THREADS - 1]*/
+#define SOS_BOOTSTRAP_THREAD_ID 0 /* This worker thread is responsible for starting the first user process (i.e. `APP_NAME`) */
 #define SOS_INTERRUPT_THREAD_ID (MAX_WORKER_THREADS)
 #ifdef CONFIG_SOS_GDB_ENABLED
 #define DEBUGGER_THREAD_ID      (MAX_WORKER_THREADS + 1)
@@ -60,6 +60,7 @@ extern __thread sos_thread_t *current_thread;
 extern sos_thread_t *worker_threads[MAX_WORKER_THREADS];
 
 void init_threads(seL4_CPtr ipc_ep, seL4_CPtr fault_ep, seL4_CPtr sched_ctrl_start_, seL4_CPtr sched_ctrl_end_);
+sos_thread_t *get_available_worker_thread();
 sos_thread_t *spawn(size_t thread_id, thread_main_f function, void *arg, seL4_Word badge, bool debugger_add);
 sos_thread_t *debugger_spawn(size_t thread_id, thread_main_f function, void *arg, seL4_Word badge, seL4_CPtr bound_ntfn);
 sos_thread_t *thread_create(size_t thread_id, thread_main_f function, void *arg, seL4_Word badge, bool resume, seL4_Word prio, 

@@ -46,6 +46,9 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
     case SYSCALL_SOS_STAT:
         ret = handle_sos_stat();
         break;
+    case SYSCALL_SOS_PROCESS_CREATE:
+        handle_sos_process_create(&reply_msg);
+        break;
     default:
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);
         ZF_LOGE("Unknown syscall %lu\n", syscall_number);

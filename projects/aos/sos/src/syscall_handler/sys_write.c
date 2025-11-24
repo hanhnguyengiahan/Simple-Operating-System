@@ -96,6 +96,13 @@ int handle_sos_write()
             seL4_Wait(current_thread->ntfn, NULL);
 
             bytes_written = args.bytes_written;
+
+            if (bytes_written < 0) {
+                ZF_LOGE("Failed to send %lu bytes via network_console_send", bytes_to_write);
+                free(temp_buf);
+                seL4_SetMR(0, -1);
+                return;
+            }
         }
         else
         { /* console file, send it to network console */

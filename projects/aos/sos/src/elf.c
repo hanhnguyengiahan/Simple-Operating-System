@@ -21,6 +21,7 @@
 #include "ut.h"
 #include "mapping.h"
 #include "elfload.h"
+#include "nfs_wrapper.h"
 
 /*
  * Convert ELF permissions into seL4 permissions.
@@ -37,6 +38,23 @@ static inline seL4_CapRights_t get_sel4_rights_from_elf(unsigned long permission
     return seL4_CapRights_new(false, false, canRead, canWrite);
 }
 
+/**
+ * Copy data from elf file to a frame. 
+ * 
+ * If elf is loaded from NFS (i.e. `elf_fh != NULL`), then we read it from the nfs at the given offset.
+ * Otherwise, read it directly from `elf_file`.
+ * 
+ * @returns 0 on success, -1 otherwise.
+ */
+static int copy_to_frame(size_t offset, unsigned char* frame_data, size_t bytes_to_copy, elf_t *elf_file, struct nfsfh* elf_fh) {
+    if (elf_fh == NULL) {
+        memcpy((void*) frame_data, (void*) (elf_file->elfFile + offset), bytes_to_copy);
+        return 0;
+    } else {
+        nfs_pread_cb_args_t args = {.thread_index = current_thread->thread_id, .read_buf = frame_data};
+        return nfs_pread_wrapper(elf_fh, &args, offset, bytes_to_copy);
+    }
+}
 /*
  * Load an elf segment into the given vspace.
  *
@@ -63,7 +81,7 @@ static inline seL4_CapRights_t get_sel4_rights_from_elf(unsigned long permission
  * @param cspace        of the loader, to allocate slots with
  * @param loader        vspace of the loader
  * @param loadee        vspace to load the segment in to
- * @param src           pointer to the content to load
+ * @param offset        pointer offset (relative to elf_file->elfFile) to the content to load
  * @param segment_size  size of segment to load
  * @param file_size     end of section that should be zero'd
  * @param dst           destination base virtual address to load
@@ -71,8 +89,9 @@ static inline seL4_CapRights_t get_sel4_rights_from_elf(unsigned long permission
  * @return
  *
  */
-static int load_segment_into_vspace(cspace_t *cspace, const char *src, size_t segment_size,
-                                    size_t file_size, uintptr_t dst, seL4_CapRights_t permissions, user_process_t *user_process)
+static int load_segment_into_vspace(cspace_t *cspace, size_t offset, size_t segment_size,
+                                    size_t file_size, uintptr_t dst, seL4_CapRights_t permissions, 
+                                    elf_t *elf_file, struct nfsfh* elf_fh, user_process_t *user_process)
 {
     assert(file_size <= segment_size);
 
@@ -110,7 +129,9 @@ static int load_segment_into_vspace(cspace_t *cspace, const char *src, size_t se
         size_t segment_bytes = PAGE_SIZE_4K - leading_zeroes;
         if (pos < file_size) {
             size_t file_bytes = MIN(segment_bytes, file_size - pos);
-            memcpy(loader_data, src, file_bytes);
+            if (copy_to_frame(offset, loader_data, file_bytes, elf_file, elf_fh)) {
+                return -1;
+            }
             loader_data += file_bytes;
             
             /* Fill in the end of the frame with zereos */
@@ -122,12 +143,12 @@ static int load_segment_into_vspace(cspace_t *cspace, const char *src, size_t se
 
         pos += segment_bytes;
         dst += segment_bytes;
-        src += segment_bytes;
+        offset += segment_bytes;
     }
     return 0;
 }
 
-int elf_load(cspace_t *cspace, elf_t *elf_file, user_process_t *user_process)
+int elf_load(cspace_t *cspace, elf_t *elf_file, struct nfsfh* elf_fh, user_process_t *user_process)
 {
     uintptr_t heap_vaddr_base;
     int num_headers = elf_getNumProgramHeaders(elf_file);
@@ -139,7 +160,7 @@ int elf_load(cspace_t *cspace, elf_t *elf_file, user_process_t *user_process)
         }
 
         /* Fetch information about this segment. */
-        const char *source_addr = elf_file->elfFile + elf_getProgramHeaderOffset(elf_file, i);
+        size_t segment_offset = elf_getProgramHeaderOffset(elf_file, i);
         size_t file_size = elf_getProgramHeaderFileSize(elf_file, i);
         size_t segment_size = elf_getProgramHeaderMemorySize(elf_file, i);
         uintptr_t vaddr = elf_getProgramHeaderVaddr(elf_file, i);
@@ -157,14 +178,13 @@ int elf_load(cspace_t *cspace, elf_t *elf_file, user_process_t *user_process)
         
         /* Copy it across into the vspace. */
         ZF_LOGE(" * Loading segment %p-->%p\n", (void *) vaddr, (void *)(vaddr + segment_size));
-        int err = load_segment_into_vspace(cspace, source_addr, segment_size, file_size, vaddr,
-            get_sel4_rights_from_elf(flags), user_process);
+        int err = load_segment_into_vspace(cspace, segment_offset, segment_size, file_size, vaddr,
+            get_sel4_rights_from_elf(flags), elf_file, elf_fh, user_process);
             if (err) {
                 ZF_LOGE("Elf loading failed!");
                 return -1;
             }
-        }
-        
+    }
         
     /* Create a heap region */
     user_process->heap_region = add_vm_region(user_process->vm_regions, heap_vaddr_base, 0, seL4_ReadWrite, false);

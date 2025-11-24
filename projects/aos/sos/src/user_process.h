@@ -7,9 +7,10 @@
 
 struct page_global_directory;
 typedef struct page_global_directory pgd_t;
-typedef uint32_t sos_pid_t;
+typedef int32_t sos_pid_t;
 struct user_process
 {
+    char command[32];
     ut_t *tcb_ut;
     seL4_CPtr tcb;
     ut_t *vspace_ut;
@@ -80,7 +81,13 @@ int copy_to_user(void *to, const void *from, size_t nbyte);
 int copy_from_user(void *to, const void *from, size_t nbyte);
 
 // TODO: add comment
-user_process_t *get_current_user_process_process();
+user_process_t *get_current_user_process();
 user_process_t *get_current_user_process_by_thread(uint64_t thread_id);
 void init_free_pids();
+
+/**
+ * Returns an available pid.
+ * 
+ * @returns If an available pid does not exist, returns -1. Otherwise, returns the available pid.
+ */
 sos_pid_t get_available_pid();

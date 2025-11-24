@@ -268,13 +268,15 @@ page_metadata_t *find_page(uintptr_t vaddr, pgd_t *pgd) {
     page_metadata_t *page = pt->page_metadatas[pt_index];
     if (page != NULL) { /* page is either on disk or in memory */
         if (page->pagefile_offset != -1) {   /* page is on disk */
-            ret = swap_to_mem(page);
-        } else {                             /* page is still in memory */
-            ret = reference_page(page, user_process->vspace, vaddr, page->rights);
+            ret = swap_to_mem(page); /* after bringing back to memory, reference it to map it again */
+        } else { /* page is still in memory. TODO: move this to VM fault, as it should be the one flippin reference bit */
+            if (page->reference_bit == 0) {
+                ret = reference_page(page, user_process->vspace, vaddr, page->rights);
+            }
         }
     }
     
-    return (ret == 0) ? page : NULL;
+    return (page != NULL && ret == 0) ? page : NULL;
 }
 
 unsigned char* find_frame_data(uintptr_t vaddr, pgd_t *pgd) {

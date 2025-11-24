@@ -6,17 +6,15 @@
 
 void nfs_close_cb(int status, struct nfs_context *nfs, void *data, void *private_data)
 {
+    nfs_close_cb_args_t *args = private_data;
+    args->status = status;
+
     if (status < 0)
     {
         ZF_LOGE("nfs_close failed with error: %s\n", (char *)data);
-        return;
     }
 
-    nfs_close_cb_args_t *args = private_data;
-    size_t thread_index = args->thread_index;
-    args->status = status;
-
-    seL4_Signal(worker_threads[thread_index]->ntfn);
+    seL4_Signal(worker_threads[args->thread_index]->ntfn);
     return;
 }
 

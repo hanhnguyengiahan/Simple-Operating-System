@@ -72,6 +72,7 @@ add_executable(
     src/page_swap.c
     src/cap_utils.c
     src/user_process.c
+    src/nfs_wrapper.c
     src/mutex.c
     src/syscall_handler/syscall_handler.c
     src/syscall_handler/sys_open.c
@@ -83,6 +84,7 @@ add_executable(
     src/syscall_handler/sys_brk.c
     src/syscall_handler/sys_usleep.c
     src/syscall_handler/sys_timestamp.c
+    src/syscall_handler/sys_process_create.c
     src/fault_handler/fault_handler.c
     src/fault_handler/vm_fault.c
 )

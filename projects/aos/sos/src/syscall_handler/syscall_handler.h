@@ -8,6 +8,7 @@
 #include "sys_getdirent.h"
 #include "sys_usleep.h"
 #include "sys_timestamp.h"
+#include "sys_process_create.h"
 #include <utils/attribute.h>
 #include <sel4/functions.h>
 /**

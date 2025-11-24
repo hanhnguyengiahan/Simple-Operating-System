@@ -22,6 +22,9 @@ sos_pid_t get_available_pid() {
     // TODO: check if record has pass a certain amount of time to avoid race condition
     sync_mutex_lock(free_pids_mutex);
 
+    if (sglib_pid_queue_t_is_empty(&free_pids)) {
+        return -1;
+    }
     pid_free_record_t record = sglib_pid_queue_t_first_element(&free_pids);
     sglib_pid_queue_t_delete_first(&free_pids);
     
