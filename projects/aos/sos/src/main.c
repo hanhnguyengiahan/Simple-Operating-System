@@ -389,7 +389,8 @@ NORETURN void *main_continued(UNUSED void *arg)
     sos_thread_t *boostrap_thread = create_worker_thread(SOS_BOOTSTRAP_THREAD_ID, start_first_process_then_loop, false);
     
     /* Assigned PID to the boostrap thread */
-    sos_pid_t available_pid = get_available_pid();
+    int available_pid = get_available_pid();
+    ZF_LOGF_IF(available_pid == -1, "Failed to get a valid available pid");
     boostrap_thread->assigned_pid = available_pid;
 
     /* Resume the bootstrap thread so it can begin loading the initial user process. */

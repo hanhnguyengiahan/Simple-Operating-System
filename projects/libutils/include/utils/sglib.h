@@ -881,6 +881,9 @@
  }\
  void sglib_##queue_type##_delete(queue_type *q) {\
   SGLIB_QUEUE_DELETE_FIRST(elem_type, q->afield, q->ifield, q->jfield, dim);\
+ }\
+ size_t sglib_##queue_type##_size(queue_type *q) { \
+  return SGLIB_QUEUE_LENGTH(elem_type, q->afield, q->ifield, q->jfield, dim); \
  }
 
 

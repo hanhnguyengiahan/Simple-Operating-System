@@ -85,6 +85,8 @@ add_executable(
     src/syscall_handler/sys_usleep.c
     src/syscall_handler/sys_timestamp.c
     src/syscall_handler/sys_process_create.c
+    src/syscall_handler/sys_process_delete.c
+    src/syscall_handler/sys_my_id.c
     src/fault_handler/fault_handler.c
     src/fault_handler/vm_fault.c
 )

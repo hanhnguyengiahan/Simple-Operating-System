@@ -194,6 +194,7 @@ seL4_Error alloc_map_frame(cspace_t *cspace, uintptr_t vaddr, user_process_t *us
     page_metadata->reference_bit = 1;
     page_metadata->pagefile_offset = -1;
     page_metadata->rights = rights;
+    page_metadata->in_use = true;
     
     uintptr_t aligned_vaddr = PAGE_ALIGN_4K(vaddr); /* seL4 page map methods only accepts vaddr that aligns with the size of a Page (4KB) */
 

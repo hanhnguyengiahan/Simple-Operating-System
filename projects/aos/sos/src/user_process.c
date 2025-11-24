@@ -1,6 +1,9 @@
 #include "user_process.h"
 #include "pagetable.h"
 #include "threads.h"
+#include "cap_utils.h"
+#include <clock/clock.h>
+
 extern cspace_t cspace;
 
 user_process_t *user_processes[MAX_NUM_PROCESSES] = {NULL};
@@ -18,18 +21,80 @@ void init_free_pids() {
     sync_mutex_new(free_pids_mutex);
 }
 
-sos_pid_t get_available_pid() {
-    // TODO: check if record has pass a certain amount of time to avoid race condition
+int delete_user_process(int pid) {
+    printf("delete user_process\n");
+    if (pid < 0 || pid >= MAX_NUM_PROCESSES) return -1;
+
+    user_process_t *user_process = user_processes[pid];
+    if (user_process == NULL) return -1;
+
+    /* vfs */
+    destroy_vfs(user_process->vfs);
+    printf("delete vfs\n");
+
+    /* linked list of frames - page global directory  */
+    destroy_pgd(user_process->page_global_directory, &cspace);
+    printf("delete pgd\n");
+
+    /* vm_regions */
+    destroy_vm_regions(user_process->vm_regions);
+    printf("delete vm_region\n");
+
+    /* IPC buffer has already been freed from `destroy_pgd`. */ 
+
+    /* user_ep */
+    free_cap(NULL, user_process->user_ep);
+    /* TCB object */
+    free_cap(user_process->tcb_ut, user_process->tcb);
+    printf("delete tcb\n");
+
+    /* stack has already been freed from `destroy_pgd`. */
+
+    /* add the pid back to the free_pids queue to reuse it */
+    pid_free_record_t pid_free_record = { .pid = pid, .freed_timestamp = get_time()};
+    sglib_pid_queue_t_add(&free_pids, pid_free_record);
+    printf("reuse pid\n");
+
+    /* vspace */
+    // TODO: unassigned vspace from an asid pool. currently could not find a function for this
+    free_cap(user_process->vspace_ut, user_process->vspace);
+    printf("delete vspace\n");
+
+    /* cspace */
+    cspace_destroy(&user_process->cspace);
+
+    free(user_process);
+    user_processes[pid] = NULL;
+    
+    return 0;
+}
+
+#define PID_REUSE_COOLDOWN_US 1000
+
+int get_available_pid() {
     sync_mutex_lock(free_pids_mutex);
 
     if (sglib_pid_queue_t_is_empty(&free_pids)) {
+        printf("free pids queue is empty!!!!\n");
+        sync_mutex_unlock(free_pids_mutex);
         return -1;
     }
-    pid_free_record_t record = sglib_pid_queue_t_first_element(&free_pids);
-    sglib_pid_queue_t_delete_first(&free_pids);
+
+    int result = -1;
+
+    while (!sglib_pid_queue_t_is_empty(&free_pids)) {
+        pid_free_record_t record = sglib_pid_queue_t_first_element(&free_pids);
+        sglib_pid_queue_t_delete_first(&free_pids);
+        if (get_time() - record.freed_timestamp >= PID_REUSE_COOLDOWN_US) {
+            result = record.pid;
+            break;
+        } else {
+            sglib_pid_queue_t_add(&free_pids, record);
+        }
+    }
     
     sync_mutex_unlock(free_pids_mutex);
-    return record.pid;
+    return result;
 }
 
 user_process_t *get_current_user_process_by_thread(uint64_t thread_id)

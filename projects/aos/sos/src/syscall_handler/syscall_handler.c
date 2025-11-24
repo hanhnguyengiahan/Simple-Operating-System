@@ -1,7 +1,6 @@
 #include "syscall_handler.h"
 #include <sossharedapi/syscalls.h>
 #include <utils/util.h>
-
 seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, bool *have_reply)
 {
     seL4_MessageInfo_t reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
@@ -16,7 +15,6 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
     int64_t ret = -1;
 
     /* Process system call */
-    /* Ideally, put all of these into syscall_handlers.c (in the future :P)*/
     switch (syscall_number)
     {
     case SYSCALL_SOS_OPEN:
@@ -47,7 +45,13 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
         ret = handle_sos_stat();
         break;
     case SYSCALL_SOS_PROCESS_CREATE:
-        handle_sos_process_create(&reply_msg);
+        ret = handle_sos_process_create();
+        break;
+    case SYSCALL_SOS_PROCESS_DELETE:
+        ret = handle_sos_process_delete();
+        break;
+    case SYSCALL_SOS_MY_ID:
+        ret = handle_sos_my_id();
         break;
     default:
         reply_msg = seL4_MessageInfo_new(0, 0, 0, 0);

@@ -14,5 +14,5 @@ void free_cap(ut_t *ut, seL4_CPtr cap) {
         ZF_LOGF("Failed to delete ntfn cap, seL4_Error = %d", del_error);
     }
     cspace_free_slot(&cspace, cap);
-    ut_free(ut);
+    if (ut != NULL) ut_free(ut);
 }
