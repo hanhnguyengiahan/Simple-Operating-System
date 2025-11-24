@@ -13,6 +13,7 @@ struct page_metadata
     int reference_bit;
     int pagefile_offset;
     seL4_CapRights_t rights;
+    bool in_use;
 };
 typedef struct page_metadata page_metadata_t;
 
@@ -58,5 +59,6 @@ seL4_Error sos_shadow_map_frame(
 int sos_shadow_unmap_frame(uintptr_t vaddr, pgd_t *pgd, cspace_t *cspace);
 
 pgd_t *create_pgd();
+void destroy_pgd(pgd_t *pgd, cspace_t *cspace);
 page_metadata_t *find_page(uintptr_t vaddr, pgd_t *pgd);
 unsigned char* find_frame_data(uintptr_t vaddr, pgd_t *pgd);

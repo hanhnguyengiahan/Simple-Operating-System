@@ -258,6 +258,11 @@ void evict_page() {
         page_metadata_t *page = sglib_pages_queue_t_first_element(&in_memory_pages);
         sglib_pages_queue_t_delete_first(&in_memory_pages);
 
+        if (!page->in_use) {
+            free(page);
+            continue;
+        }
+        
         if (page->reference_bit == 1) { /* give it a second chance */
             page->reference_bit = 0;
             sglib_pages_queue_t_add(&in_memory_pages, page);

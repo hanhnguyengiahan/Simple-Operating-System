@@ -5,7 +5,7 @@
 #include <elf/elf.h>
 #include "../user_process.h"
 
-void handle_sos_process_create(seL4_MessageInfo_t *reply_msg);
+int handle_sos_process_create();
 
 /**
  * Create a process return true if successful.

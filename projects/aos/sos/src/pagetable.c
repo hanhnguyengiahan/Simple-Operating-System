@@ -3,6 +3,7 @@
 #include "utils.h"
 #include "user_process.h"
 #include "page_swap.h"
+#include "mapping.h"
 
 #define PAGE_TABLE_NAME "Page Table"
 #define PAGE_DIRECTORY_NAME "Page Directory"
@@ -23,6 +24,134 @@ static size_t get_pt_bits(uintptr_t vaddr) {
     return (vaddr >> 12) & 0x1FF;
 }
 
+/*  Maps a page object (Page Upper Directory, Page Directory, or Page Table) into the root servers page global directory.
+    Returns 0 on success. On failure, returns -1 and caller must free the page object to prevent memory leak.    
+*/
+static seL4_Error map_page_object(
+    seL4_CPtr* slot, 
+    ut_t** ut,
+    seL4_Word vaddr, cspace_t *cspace, user_process_t *user_process,
+    const char* page_object_name
+) {
+    *slot = cspace_alloc_slot(cspace);
+    if (*slot == seL4_CapNull) {
+        ZF_LOGE("No cptr to alloc paging structure");
+        return seL4_NotEnoughMemory;
+    }
+
+    *ut = alloc_retype(slot, seL4_ARM_PageTableObject, seL4_PageBits);
+    if (*ut == NULL) {
+        ZF_LOGE("Out of 4k untyped");
+        cspace_delete(cspace, *slot);
+        cspace_free_slot(cspace, *slot);
+        return seL4_NotEnoughMemory;
+    }
+
+    seL4_Error err = seL4_ARM_PageTable_Map(*slot, user_process->vspace, vaddr, seL4_ARM_Default_VMAttributes);
+    if (err != seL4_NoError) {
+        ZF_LOGE("Unable to map %s to Page Global Directory", page_object_name);
+        ut_free(*ut);
+
+        cspace_delete(cspace, *slot);
+        cspace_free_slot(cspace, *slot);
+        return err;
+    }
+
+    return seL4_NoError;
+}
+
+/*  Unmaps a page object (Page Upper Directory, Page Directory, or Page Table) from the root servers page global directory.
+    Returns 0 on success. On failure, returns -1. 
+*/
+static seL4_Error unmap_page_object(
+    seL4_CPtr slot, 
+    ut_t* ut,
+    cspace_t *cspace,
+    const char* page_object_name
+) {
+
+    seL4_Error err = seL4_ARM_PageTable_Unmap(slot);
+    if (err != seL4_NoError) {
+        ZF_LOGE("Unable to unmap %s from Page Global Directory", page_object_name);
+        return err;
+    }
+    
+    ut_free(ut);
+    cspace_delete(cspace, slot);
+    cspace_free_slot(cspace, slot);
+
+    return seL4_NoError;
+}
+
+void destroy_pgd(pgd_t *pgd, cspace_t *cspace) {
+    if (pgd == NULL) return;
+
+    for (size_t i = 0; i < TABLE_SIZE_BITS; ++i) {
+        destroy_pud(pgd->page_upper_directories[i], cspace); 
+    }
+
+    free(pgd);
+}
+
+void destroy_pud(pud_t *pud, cspace_t *cspace) {
+    if (pud == NULL) return;
+
+    printf("destroy pud\n");
+
+    for (size_t i = 0; i < TABLE_SIZE_BITS; ++i) {
+        destroy_pd(pud->page_directories[i], cspace);
+    }
+
+    unmap_page_object(pud->slot, pud->ut, cspace, PAGE_UPPER_DIRECTORY_NAME);
+    free(pud);
+
+}
+
+void destroy_pd(pd_t *pd, cspace_t *cspace) {
+    if (pd == NULL) return;
+
+    printf("destroy pd\n");
+
+    for (size_t i = 0; i < TABLE_SIZE_BITS; ++i) {
+        destroy_pt(pd->page_tables[i], cspace);
+    }
+
+    unmap_page_object(pd->slot, pd->ut, cspace, PAGE_DIRECTORY_NAME);
+    free(pd);
+
+}
+
+void destroy_pt(pt_t *pt, cspace_t *cspace) {
+    if (pt == NULL) return;
+
+    printf("destroy pt\n");
+
+    for (size_t i = 0; i < TABLE_SIZE_BITS; ++i) {
+        destroy_page(pt->page_metadatas[i], cspace);
+    }
+
+    unmap_page_object(pt->slot, pt->ut, cspace, PAGE_TABLE_NAME);
+    free(pt);
+
+}
+
+void destroy_page(page_metadata_t *page, cspace_t *cspace) {
+    if (page == NULL) return;
+
+    if (page->pagefile_offset != -1) { /* page is currently on the disk */
+        swap_to_mem(page);
+    }
+
+    // destruct page_metadata
+    seL4_Error err = dealloc_unmap_frame(cspace, page);
+    ZF_LOGF_IF(err != seL4_NoError, "Unable to deallocate and unmap the page, seL4_Error = %d\n", err);
+    
+    /*  Mark this page as no longer in use. 
+        The evict_page() routine will detect in_use == false and release the page's resources safely.
+    */
+    page->in_use = false;
+}
+
 pgd_t *create_pgd() {
     pgd_t *pgd = malloc(sizeof(pgd_t));
     if (!pgd) {
@@ -33,41 +162,6 @@ pgd_t *create_pgd() {
         pgd->page_upper_directories[i] = NULL;
     }
     return pgd;
-}
-/*  Maps a page object (Page Upper Directory, Page Directory, or Page Table) into the root servers page global directory.
-    Returns 0 on success. On failure, returns -1 and caller must free the page object to prevent memory leak.    
-*/
-static seL4_Error map_page_object(
-    seL4_CPtr* slot, 
-    ut_t* ut,
-    seL4_Word vaddr, cspace_t *cspace, user_process_t *user_process,
-    const char* page_object_name
-) {
-    *slot = cspace_alloc_slot(cspace);
-    if (*slot == seL4_CapNull) {
-        ZF_LOGE("No cptr to alloc paging structure");
-        return seL4_NotEnoughMemory;
-    }
-
-    ut = alloc_retype(slot, seL4_ARM_PageTableObject, seL4_PageBits);
-    if (ut == NULL) {
-        ZF_LOGE("Out of 4k untyped");
-        cspace_delete(cspace, *slot);
-        cspace_free_slot(cspace, *slot);
-        return seL4_NotEnoughMemory;
-    }
-
-    seL4_Error err = seL4_ARM_PageTable_Map(*slot, user_process->vspace, vaddr, seL4_ARM_Default_VMAttributes);
-    if (err != seL4_NoError) {
-        ZF_LOGE("Unable to map %s to Page Global Directory", page_object_name);
-        ut_free(ut);
-
-        cspace_delete(cspace, *slot);
-        cspace_free_slot(cspace, *slot);
-        return err;
-    }
-
-    return seL4_NoError;
 }
 
 static seL4_Error create_pud(pud_t** source_pud, seL4_Word vaddr, cspace_t *cspace, user_process_t *user_process) {
@@ -81,7 +175,7 @@ static seL4_Error create_pud(pud_t** source_pud, seL4_Word vaddr, cspace_t *cspa
         pud->page_directories[i] = NULL;
     }
 
-    seL4_Error err = map_page_object(&pud->slot, pud->ut, vaddr, cspace, user_process, PAGE_UPPER_DIRECTORY_NAME);
+    seL4_Error err = map_page_object(&pud->slot, &pud->ut, vaddr, cspace, user_process, PAGE_UPPER_DIRECTORY_NAME);
     if (err != seL4_NoError) {
         free(pud);
         return err;
@@ -102,7 +196,7 @@ static seL4_Error create_pd(pd_t** source_pd, seL4_Word vaddr, cspace_t *cspace,
         pd->page_tables[i] = NULL;
     }
 
-    seL4_Error err = map_page_object(&pd->slot, pd->ut, vaddr, cspace, user_process, PAGE_DIRECTORY_NAME);
+    seL4_Error err = map_page_object(&pd->slot, &pd->ut, vaddr, cspace, user_process, PAGE_DIRECTORY_NAME);
     if (err != seL4_NoError) {
         free(pd);
         return err;
@@ -122,7 +216,7 @@ static seL4_Error create_pt(pt_t** source_pt, seL4_Word vaddr, cspace_t *cspace,
         pt->page_metadatas[i] = NULL;
     }
 
-    seL4_Error err = map_page_object(&pt->slot, pt->ut, vaddr, cspace, user_process, PAGE_TABLE_NAME);
+    seL4_Error err = map_page_object(&pt->slot, &pt->ut, vaddr, cspace, user_process, PAGE_TABLE_NAME);
     if (err != seL4_NoError) {
         free(pt);
         return err;

@@ -1,5 +1,27 @@
 #include "vm_region.h"
 #include <stdbool.h>
+
+int init_vm_regions(list_t **vm_regions) {
+    *vm_regions = malloc(sizeof(list_t));
+    if (!*vm_regions) {
+        ZF_LOGE("Failed to alloc vm regions");
+        return -1;
+    }
+    list_init(*vm_regions);
+    return 0;
+}
+
+void destroy_vm_regions(list_t *vm_regions) {
+    for (struct list_node *cur = vm_regions->head; cur != NULL;) {
+        free(cur->data);
+        
+        struct list_node *next =cur->next;
+        free(cur);
+        cur = next;
+    }
+    free(vm_regions);
+}
+
 vm_region_t *add_vm_region(list_t *vm_regions, uintptr_t vaddr_base, size_t size, seL4_CapRights_t rights, bool grows_downward) {
     vm_region_t *region = malloc(sizeof(vm_region_t));
     if (region == NULL) {

@@ -21,6 +21,7 @@ add_executable(
     src/tests.c 
     src/file_system.c
     src/vm.c
+    src/process.c
 )
 target_link_libraries(tests sel4runtime muslc sel4 sosapi utils)
 target_include_directories(tests PRIVATE "include")

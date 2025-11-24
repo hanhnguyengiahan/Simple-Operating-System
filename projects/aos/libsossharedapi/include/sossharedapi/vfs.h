@@ -37,5 +37,6 @@ typedef struct {
 } vfs_t;
 
 /* file descriptor number is used to index to the array */
-void vfs_init(vfs_t *vfs);
+int init_vfs(vfs_t **vfs);
 int find_next_fd(vfs_t *vfs);
+void destroy_vfs(vfs_t *vfs);

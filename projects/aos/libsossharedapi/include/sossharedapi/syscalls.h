@@ -11,3 +11,5 @@
 #define SYSCALL_SOS_GETDIRENT       7
 #define SYSCALL_SOS_STAT            8
 #define SYSCALL_SOS_PROCESS_CREATE  9
+#define SYSCALL_SOS_PROCESS_DELETE  10
+#define SYSCALL_SOS_MY_ID           11

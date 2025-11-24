@@ -442,12 +442,10 @@ bool create_process(char *app_name, seL4_CPtr ep, sos_pid_t pid, elf_t* elf_file
     }
     
     /* Initialise the virtual file system */
-    user_process->vfs = malloc(sizeof(vfs_t));
-    if (!user_process->vfs) {
-        ZF_LOGE("Failed to alloc vfs");
+    if (init_vfs(&user_process->vfs) == -1) {
+        ZF_LOGE("Failed to init vfs");
         return false;
     }
-    vfs_init(user_process->vfs);
 
     /* Initialise the page global directory, for virtual memory management */
     user_process->page_global_directory = create_pgd();
@@ -457,12 +455,10 @@ bool create_process(char *app_name, seL4_CPtr ep, sos_pid_t pid, elf_t* elf_file
     }
 
     /* Initialise a linked list of vm_regions */
-    user_process->vm_regions = malloc(sizeof(list_t));
-    if (!user_process->vm_regions) {
-        ZF_LOGE("Failed to alloc vm regions");
+    if (init_vm_regions(&user_process->vm_regions) == -1) {
+        ZF_LOGE("Failed to init vm regions");
         return false;
-    }
-    list_init(user_process->vm_regions);
+    }   
 
     /* Create an IPC buffer */
     err = alloc_map_frame(&cspace, PROCESS_IPC_BUFFER, user_process, seL4_AllRights);
@@ -485,11 +481,9 @@ bool create_process(char *app_name, seL4_CPtr ep, sos_pid_t pid, elf_t* elf_file
     /* allocate a new slot in the target cspace which we will mint a badged endpoint cap into --
      * the badge is used to identify the process, which will come in handy when you have multiple
      * processes. */
-    /**
-     * TODO: need to keep this into process pcb
-     */
-    seL4_CPtr user_ep = cspace_alloc_slot(&user_process->cspace);
-    if (user_ep == seL4_CapNull) {
+
+    user_process->user_ep = cspace_alloc_slot(&user_process->cspace);
+    if (user_process->user_ep == seL4_CapNull) {
         ZF_LOGE("Failed to alloc user ep slot");
         return false;
     }
@@ -497,9 +491,9 @@ bool create_process(char *app_name, seL4_CPtr ep, sos_pid_t pid, elf_t* elf_file
     /* now mutate the cap, thereby setting the badge */
     // TODO: consider if it is necessary to set the badge here.
     if (elf_fh) {
-        err = cspace_mint(&user_process->cspace, user_ep, &cspace, ep, seL4_AllRights, 0);
+        err = cspace_mint(&user_process->cspace, user_process->user_ep, &cspace, ep, seL4_AllRights, 0);
     } else { /* elf_fh == NULL means this is loading the initial user process, hence set the badge */
-        err = cspace_mint(&user_process->cspace, user_ep, &cspace, ep, seL4_AllRights, APP_EP_BADGE);
+        err = cspace_mint(&user_process->cspace, user_process->user_ep, &cspace, ep, seL4_AllRights, APP_EP_BADGE);
     }
 
     if (err) {
@@ -578,10 +572,8 @@ bool create_process(char *app_name, seL4_CPtr ep, sos_pid_t pid, elf_t* elf_file
     return err == seL4_NoError;
 }
 
-void handle_sos_process_create(seL4_MessageInfo_t *reply_msg) {
+int handle_sos_process_create() {
     ZF_LOGV("syscall: process_create!\n");
-
-    *reply_msg = seL4_MessageInfo_new(0, 0, 0, 1);
 
     uintptr_t path_vaddr = seL4_GetMR(1);
     size_t path_len = seL4_GetMR(2);
@@ -592,42 +584,38 @@ void handle_sos_process_create(seL4_MessageInfo_t *reply_msg) {
     struct nfsfh *elf_fh = open_elf(path_vaddr, path_len, &path);
     if (elf_fh == NULL) {
         ZF_LOGE("Failed to open elf file on NFS");
-        seL4_SetMR(0, -1);
 
         free(path); /* path can either be freed already or not. Just free it again anyways. */
-        return;
+        return -1;
     }
     ZF_LOGE("finish open elf\n");
 
     sos_stat_t elf_stat;
     if (get_elf_stat(path, &elf_stat)) {
         ZF_LOGE("Failed to get elf stat");
-        seL4_SetMR(0, -1);
         
         free(path);
         close_elf(elf_fh);
-        return;
+        return -1;
     }
     ZF_LOGE("finish get elf stat\n");
 
     if (!(elf_stat.st_fmode & FM_EXEC)) {
         ZF_LOGE("Elf file must be executable");
-        seL4_SetMR(0, -1);
 
         free(path);
         close_elf(elf_fh);
-        return;
+        return -1;
     }
 
     // read one page of content. We assume that header size is less than the page size.
     unsigned char* elf_header_data = NULL; 
     if (read_elf_header(elf_fh, &elf_header_data)) {
         ZF_LOGE("Failed to read first page of data from elf on NFS");
-        seL4_SetMR(0, -1);
         
         free(path);
         close_elf(elf_fh);
-        return;
+        return -1;
     }
     ZF_LOGE("finish read header \n");
 
@@ -635,47 +623,43 @@ void handle_sos_process_create(seL4_MessageInfo_t *reply_msg) {
     elf_t elf_file;
     if (elf_newFile((const void*) elf_header_data, elf_stat.st_size, &elf_file)) {
         ZF_LOGE("Invalid elf file");
-        seL4_SetMR(0, -1);
         
         free(path);
         free(elf_header_data);
         close_elf(elf_fh);
-        return;
+        return -1;
     }
 
     // gets next pid
     sos_pid_t pid = get_available_pid();
     if (pid == -1) {
         ZF_LOGE("Reached max num processes");
-        seL4_SetMR(0, -1);
 
         free(path);
         free(elf_header_data);
         close_elf(elf_fh);
-        return;
+        return -1;
     }
     // assigns user process id to a thread
     sos_thread_t *worker_thread = get_available_worker_thread();
     if (worker_thread == NULL) {
         ZF_LOGE("No available worker thread");
-        seL4_SetMR(0, -1);
 
         free(path);
         free(elf_header_data);
         close_elf(elf_fh);
-        return;
+        return -1;
     }
 
     if (!create_process(path, worker_thread->ipc_ep, pid, &elf_file, elf_fh)) {
         ZF_LOGE("Failed to create a new process");
-        seL4_SetMR(0, -1);
 
         free(path);
         free(elf_header_data);
         close_elf(elf_fh);
 
         // TODO: clean up the user process.....
-        return;
+        return -1;
     }
 
     worker_thread->assigned_pid = pid;
@@ -683,6 +667,5 @@ void handle_sos_process_create(seL4_MessageInfo_t *reply_msg) {
     strncpy(user_processes[pid]->command, path, 32); // TODO: MAGIC NUMBER
     user_processes[pid]->command[31] = '\0';
 
-    seL4_SetMR(0, pid);
-    return;
+    return pid;
 }

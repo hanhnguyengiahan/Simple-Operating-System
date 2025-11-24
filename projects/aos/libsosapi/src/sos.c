@@ -124,15 +124,19 @@ pid_t sos_process_create(const char *path)
 
 int sos_process_delete(pid_t pid)
 {
-    // assert(!"You need to implement this");
-    return -1;
+    seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 2);
+    seL4_SetMR(0, SYSCALL_SOS_PROCESS_DELETE);
+    seL4_SetMR(1, pid);
+    seL4_Call(SOS_IPC_EP_CAP, tag);
+    return seL4_GetMR(0);
 }
 
 pid_t sos_my_id(void)
 {
-
-    // assert(!"You need to implement this");
-    return -1;
+    seL4_MessageInfo_t tag = seL4_MessageInfo_new(0, 0, 0, 1);
+    seL4_SetMR(0, SYSCALL_SOS_MY_ID);
+    seL4_Call(SOS_IPC_EP_CAP, tag);
+    return seL4_GetMR(0);
 
 }
 

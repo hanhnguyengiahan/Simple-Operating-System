@@ -16,6 +16,8 @@ struct user_process
     ut_t *vspace_ut;
     seL4_CPtr vspace;
 
+    seL4_CPtr user_ep; // ep to communicate to SOS
+
     seL4_CPtr ipc_buffer;
 
     ut_t *sched_context_ut;
@@ -23,7 +25,6 @@ struct user_process
 
     cspace_t cspace;
 
-    ut_t *stack_ut;
     seL4_CPtr stack;
     uintptr_t guard_page_vaddr;
 
@@ -90,4 +91,5 @@ void init_free_pids();
  * 
  * @returns If an available pid does not exist, returns -1. Otherwise, returns the available pid.
  */
-sos_pid_t get_available_pid();
+int get_available_pid();
+int delete_user_process(int pid);
