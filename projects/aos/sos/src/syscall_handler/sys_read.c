@@ -103,7 +103,7 @@ int handle_sos_read()
             { // assuming this is EOF
                 early_return = true;
             }
-            else if (bytes_read == -1)
+            else if (bytes_read < 0)
             {
                 failed = true;
             }

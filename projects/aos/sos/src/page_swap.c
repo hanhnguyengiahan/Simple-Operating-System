@@ -7,7 +7,9 @@
 #include "cap_utils.h"
 #include "backtrace.h"
 #ifdef CONFIG_SOS_FRAME_LIMIT
-#define PAGES_QUEUE_MAX_SIZE    ((CONFIG_SOS_FRAME_LIMIT == 0ul) ? (1 << 19) : CONFIG_SOS_FRAME_LIMIT)
+/* The queue would contain (`PAGES_QUEUE_MAX_SIZE - 1`) pages only, because of the `SGLIB_QUEUE` being a ring buffer (so it keeps 1 slot to identify fullness of the queue). 
+However, it is okay because we do not store frame 0 (the sentinel NULL frame). */
+#define PAGES_QUEUE_MAX_SIZE    ((CONFIG_SOS_FRAME_LIMIT == 0ul) ? (1 << 19) : CONFIG_SOS_FRAME_LIMIT) 
 #define OFFSET_QUEUE_MAX_SIZE   ((CONFIG_SOS_FRAME_LIMIT == 0ul) ? (1 << 19) : (CONFIG_SOS_FRAME_LIMIT * 150))
 #else
 #define PAGES_QUEUE_MAX_SIZE (1 << 19)
@@ -108,6 +110,7 @@ int swap_to_mem(page_metadata_t *page) {
     read_from_pagefile(data, page);
 
     /* return pagefile offset to queue */
+    /* TODO: this is not what we want, we want to keep the content in pagefile (and the offset to it) until the process is destroy */
     free_pagefile_offsets_add(page->pagefile_offset);
 
     /* allocate a slot to duplicate the frame cap so we can map it into the application */
@@ -130,7 +133,7 @@ int swap_to_mem(page_metadata_t *page) {
     // update the page's status
     page->frame_ref = frame_ref;
     page->frame_cap = frame_cptr;
-    page->reference_bit = 1;
+    page->reference_bit = 0;
     page->pagefile_offset = -1;
     
     in_memory_pages_add(page);

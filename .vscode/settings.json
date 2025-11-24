@@ -66,6 +66,12 @@
         "ut.h": "c",
         "mutex.h": "c",
         "device.h": "c",
-        "stddef.h": "c"
+        "stddef.h": "c",
+        "sys_process_create.h": "c",
+        "sys_usleep.h": "c",
+        "registers.h": "c",
+        "sched_ctrl.h": "c",
+        "user_app.h": "c",
+        "nfs_wrapper.h": "c"
     }
 }
