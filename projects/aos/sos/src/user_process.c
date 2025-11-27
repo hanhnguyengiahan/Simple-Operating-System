@@ -14,16 +14,19 @@ SGLIB_DEFINE_QUEUE_FUNCTIONS(pid_queue_t, pid_free_record_t, arr, i, j, MAX_NUM_
 pid_queue_t free_pids = {.arr = {0}, .i = 0, .j = 0};
 
 int get_num_active_processes() {
+    sync_recursive_mutex_lock(user_processes_mutex);
     int num_active_processes = 0;
     for (pid_t pid = 0; pid < MAX_NUM_PROCESSES; pid++) {
         if (user_processes[pid] != NULL) {
             num_active_processes += 1;
         }
     }
+    sync_recursive_mutex_unlock(user_processes_mutex);
     return num_active_processes;
 }
 
 void get_user_process_status(sos_process_t *processes, int num_active_processes) {
+    sync_recursive_mutex_lock(user_processes_mutex);
     int i = 0;
     pid_t pid = 0;
     while (i < num_active_processes && pid < MAX_NUM_PROCESSES) {
@@ -40,6 +43,7 @@ void get_user_process_status(sos_process_t *processes, int num_active_processes)
         }
         pid++;
     }
+    sync_recursive_mutex_unlock(user_processes_mutex);
 }
 
 void init_free_pids() {
@@ -57,11 +61,12 @@ int delete_user_process(int pid) {
     printf("delete user_process\n");
     if (pid < 0 || pid >= MAX_NUM_PROCESSES) return -1;
 
+    // Protects the destruction from other calls to delete_user_process with the same pid, or sos_process_wait with the same pid.
     sync_recursive_mutex_lock(user_processes_mutex);
     
     user_process_t *user_process = user_processes[pid];
     if (user_process == NULL) {
-        ZF_LOGE("Attempting to delete a non-existing process");
+        ZF_LOGE("It is either the process with given pid has been deleted, or there are no process with given pid.");
         sync_recursive_mutex_unlock(user_processes_mutex);
         return -1;
     }
