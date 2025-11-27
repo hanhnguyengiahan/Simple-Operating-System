@@ -25,22 +25,12 @@ int handle_sos_close(size_t fd)
         return -1;
     }
 
-    if (fd == STDOUT_FD || fd == STDERR_FD) return 0;
+    if (fd == STDOUT_FD || fd == STDERR_FD || fd == CONSOLE_FD) return 0;
 
     if (fd == STDIN_FD) {
         file->is_opened = false;
         file->mode = -1;
         update_nwcs_reader(-1);
-        return 0;
-    }
-    
-    if (fd == CONSOLE_FD)
-    {   
-        bool is_reader = (file->mode == O_RDONLY) || (file->mode == O_RDWR);
-        if (is_reader) {
-            update_nwcs_reader(-1);
-            file->mode = O_WRONLY;
-        }
         return 0;
     }
 

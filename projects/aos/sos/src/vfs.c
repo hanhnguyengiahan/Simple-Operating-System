@@ -18,6 +18,7 @@ int init_vfs(vfs_t **vfs) {
 
     (*vfs)->fd_table[STDIN_FD].is_opened = false;
     (*vfs)->fd_table[STDIN_FD].path = "stdin";
+    (*vfs)->fd_table[STDIN_FD].mode = O_RDONLY;
 
     // mark stdout and stderr open
     (*vfs)->fd_table[STDOUT_FD].is_opened = true;
@@ -35,8 +36,7 @@ int init_vfs(vfs_t **vfs) {
 }
 
 void destroy_vfs(vfs_t *vfs) {
-    // TODO: need to check if console fd was opened to read, then close it as well.
-    for (int i = 4; i < PROCESS_MAX_FILES; i++) {
+    for (int i = 0; i < PROCESS_MAX_FILES; i++) {
         // close all file descriptors
         if (vfs->fd_table[i].is_opened) {
             handle_sos_close(i);

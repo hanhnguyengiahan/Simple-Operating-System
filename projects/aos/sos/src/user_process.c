@@ -71,8 +71,6 @@ int delete_user_process(int pid) {
         return -1;
     }
 
-    user_processes[pid] = NULL;
-
     /** It is essential that this is the first step when deleting a user process so it does not cause any fault/unexpected behaviour. 
      *  For example, if `current_thread->assigned_pid = -1` is called before this, then a NFS callback argument might take `expected_pid` as -1,
      *  hence causing unexpected behaviors.
@@ -128,6 +126,7 @@ int delete_user_process(int pid) {
     printf("signals waiter and clean up\n");
     
     free(user_process);
+    user_processes[pid] = NULL;
 
     current_thread->assigned_pid = -1;
 

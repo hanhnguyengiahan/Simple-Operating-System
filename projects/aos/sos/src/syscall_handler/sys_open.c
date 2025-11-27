@@ -44,6 +44,7 @@ void sos_open_callback(int err, struct nfs_context *nfs, void *data, void *priva
 
 int handle_sos_open_nwcs(fmode_t mode)
 {
+    int returned_fd = CONSOLE_FD;
     user_process_t *user_process = get_current_user_process();
 
     sos_fd_t *console = &user_process->vfs->fd_table[CONSOLE_FD];
@@ -55,14 +56,15 @@ int handle_sos_open_nwcs(fmode_t mode)
     case O_RDWR:
         if (has_reader)
             return -1; // only allow one nwcs reader
-        console->mode = O_RDWR;
         update_nwcs_reader(current_thread->thread_id);
+        returned_fd = STDIN_FD;
+        user_process->vfs->fd_table[STDIN_FD].is_opened = true;
         break;
     case O_WRONLY:
         console->mode = has_reader ? O_RDWR : O_WRONLY;
         break;
     }
-    return CONSOLE_FD;
+    return returned_fd;
 }
 int handle_sos_open_stdin(fmode_t mode) {
     if (mode != O_RDONLY) // stdin only allows read mode
