@@ -31,21 +31,6 @@ int init_waitlist(waitlist_t **waitlist_out) {
 int add_waiter(waitlist_t *waitlist, seL4_CPtr src_ntfn) {
     sync_recursive_mutex_lock(waitlist->mutex);
 
-    // seL4_CPtr copied_ntfn = cspace_alloc_slot(&cspace);
-    // if (copied_ntfn == seL4_CapNull) {
-    //     ZF_LOGE("Failed to alloc slot for ntfn");
-    //     sync_recursive_mutex_unlock(waitlist->mutex);
-    //     return -1;
-    // }
-
-    // seL4_Error err = cspace_copy(&cspace, copied_ntfn, &cspace, src_ntfn, seL4_AllRights);
-    // if (err != seL4_NoError) {
-    //     cspace_free_slot(&cspace, copied_ntfn);
-    //     ZF_LOGE("Failed to copy cap");
-    //     sync_recursive_mutex_unlock(waitlist->mutex);
-    //     return -1;
-    // }
-
     seL4_CPtr *ntfn_ptr = malloc(sizeof(seL4_CPtr));
     *ntfn_ptr = src_ntfn;
 
