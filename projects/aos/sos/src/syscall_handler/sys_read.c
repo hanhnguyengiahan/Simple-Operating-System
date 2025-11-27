@@ -76,7 +76,7 @@ int handle_sos_read()
 
     if (!user_process->vfs->fd_table[file_desc].is_opened)
     {
-        ZF_LOGE("File is not open yet!");
+        ZF_LOGE("File %d is not open yet!", file_desc);
         return -1;
     }
 
@@ -87,7 +87,7 @@ int handle_sos_read()
         return -1;
     }
 
-    if (file_desc != CONSOLE_FD)
+    if (file_desc != CONSOLE_FD && file_desc != STDIN_FD)
     { /* normal files */
         if (user_process->vfs->fd_table[file_desc].fh == NULL)
         {
@@ -113,7 +113,7 @@ int handle_sos_read()
         bool early_return = false;
         bool failed = false;
 
-        if (file_desc != CONSOLE_FD)
+        if (file_desc != CONSOLE_FD && file_desc != STDIN_FD)
         { /* normal files */
             struct nfs_context *nfs_context = get_nfs_context();
 
