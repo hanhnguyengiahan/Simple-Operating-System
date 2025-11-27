@@ -1,9 +1,22 @@
 #pragma once
 #include <aos/sel4_zf_logif.h>
 #include "threads.h"
+#include <sossharedapi/process.h>
 
-typedef struct nfs_pread_cb_args {
+typedef struct
+{
+    int thread_index;
+    pid_t expected_pid;
+    sos_stat_t sos_stat;
+    st_type_t st_type;
+    int status;
+} nfs_stat_cb_args_t;
+void nfs_stat_cb(int err, struct nfs_context *nfs, void *data, void *private_data);
+int nfs_stat_wrapper(unsigned char *temp_path_buf, nfs_stat_cb_args_t* args);
+typedef struct
+{
     uint32_t thread_index;
+    pid_t expected_pid;
     int bytes_read;
     unsigned char *read_buf;
 } nfs_pread_cb_args_t;
@@ -20,6 +33,7 @@ int nfs_pread_wrapper(struct nfsfh* fh, nfs_pread_cb_args_t* args, uint64_t offs
 typedef struct
 {
     size_t thread_index;
+    pid_t expected_pid;
     int status;
 } nfs_close_cb_args_t;
 void nfs_close_cb(int status, struct nfs_context *nfs, void *data, void *private_data);

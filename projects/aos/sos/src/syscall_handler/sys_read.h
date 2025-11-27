@@ -4,10 +4,12 @@
 #include <stddef.h>
 #include <aos/sel4_zf_logif.h>
 #include "../recursive_mutex.h"
+#include <sossharedapi/process.h>
 
 typedef struct
 {
     size_t thread_index;
+    pid_t expected_pid;
     size_t bytes_read;
     unsigned char *data;
 } nfs_read_cb_args_t;

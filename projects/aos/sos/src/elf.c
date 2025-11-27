@@ -51,7 +51,11 @@ static int copy_to_frame(size_t offset, unsigned char* frame_data, size_t bytes_
         memcpy((void*) frame_data, (void*) (elf_file->elfFile + offset), bytes_to_copy);
         return 0;
     } else {
-        nfs_pread_cb_args_t args = {.thread_index = current_thread->thread_id, .read_buf = frame_data};
+        nfs_pread_cb_args_t args = {
+            .thread_index = current_thread->thread_id, 
+            .read_buf = frame_data,
+            .expected_pid = current_thread->assigned_pid
+        };
         return nfs_pread_wrapper(elf_fh, &args, offset, bytes_to_copy);
     }
 }

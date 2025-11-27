@@ -6,17 +6,30 @@
 
 void nfs_write_cb(int status, struct nfs_context *nfs, void *data, void *private_data)
 {
+    sync_recursive_mutex_lock(worker_threads_mutex);
+
     nfs_write_cb_args_t *args = private_data;
     size_t thread_index = args->thread_index;
+    pid_t expected_pid = args->expected_pid;
+
+    sos_thread_t *worker_thread = worker_threads[thread_index];
+    if (expected_pid != worker_thread->assigned_pid) {
+        sync_recursive_mutex_unlock(worker_threads_mutex);
+        return;
+    }
+
     args->bytes_written = status;
 
     if (status < 0)
     {
         ZF_LOGE("nfs_write failed with error: %s\n", (char *)data);
-        seL4_Signal(worker_threads[thread_index]->ntfn);
+        seL4_Signal(worker_thread->ntfn);
+        sync_recursive_mutex_unlock(worker_threads_mutex);
         return;
     }
-    seL4_Signal(worker_threads[thread_index]->ntfn);
+    seL4_Signal(worker_thread->ntfn);
+    sync_recursive_mutex_unlock(worker_threads_mutex);
+
     return;
 }
 
@@ -84,7 +97,11 @@ int handle_sos_write()
         { /* normal files */
             struct nfs_context *nfs_context = get_nfs_context();
 
-            nfs_write_cb_args_t args = {.thread_index = current_thread->thread_id };
+            nfs_write_cb_args_t args = {
+                .thread_index = current_thread->thread_id,
+                .expected_pid = current_thread->assigned_pid
+            };
+
             int ret = nfs_write_async(nfs_context, user_process->vfs->fd_table[file_desc].fh, bytes_to_write, (const void *)temp_buf,
                                       nfs_write_cb, (void *)&args);
             if (ret < 0)

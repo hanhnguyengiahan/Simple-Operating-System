@@ -25,18 +25,33 @@ int get_nwcs_reader_value() {
 
 void nfs_read_cb(int status, struct nfs_context *nfs, void *data, void *private_data)
 {
+    sync_recursive_mutex_lock(worker_threads_mutex);
+
     nfs_read_cb_args_t *args = private_data;
+
+    int thread_index        = args->thread_index;
+    pid_t expected_pid      = args->expected_pid;
+
+    sos_thread_t *worker_thread = worker_threads[thread_index];
+
+    if (expected_pid != worker_thread->assigned_pid) {
+        sync_recursive_mutex_unlock(worker_threads_mutex);
+        return;
+    }
     args->bytes_read = status;
 
     if (status < 0)
     {
         ZF_LOGE("nfs_read failed with error: %s\n", (char *)data);
-        seL4_Signal(worker_threads[args->thread_index]->ntfn);
+        seL4_Signal(worker_thread->ntfn);
+        sync_recursive_mutex_unlock(worker_threads_mutex);
         return;
     }
 
     memcpy(args->data, data, status);
-    seL4_Signal(worker_threads[args->thread_index]->ntfn);
+    seL4_Signal(worker_thread->ntfn);
+    sync_recursive_mutex_unlock(worker_threads_mutex);
+
     return;
 }
 /*  nwcs_reader must be set to -1 before the function retunrs.
@@ -102,7 +117,12 @@ int handle_sos_read()
         { /* normal files */
             struct nfs_context *nfs_context = get_nfs_context();
 
-            nfs_read_cb_args_t args = {.thread_index = current_thread->thread_id, .data = data};
+            nfs_read_cb_args_t args = {
+                .thread_index = current_thread->thread_id,
+                .data = data,
+                .expected_pid = current_thread->assigned_pid,
+            };
+
             int ret = nfs_read_async(nfs_context, user_process->vfs->fd_table[file_desc].fh, bytes_to_read,
                                      nfs_read_cb, (void *)&args);
             if (ret < 0)

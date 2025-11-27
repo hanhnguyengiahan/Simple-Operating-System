@@ -7,7 +7,17 @@ extern sos_thread_t *worker_threads[MAX_WORKER_THREADS];
 
 void nfs_opendir_cb(int status, struct nfs_context *nfs, void *data, void *private_data)
 {
+    sync_recursive_mutex_lock(worker_threads_mutex);
+
     int thread_index = ((nfs_opendir_cb_args_t *)private_data)->thread_index;
+    pid_t expected_pid = ((nfs_opendir_cb_args_t *)private_data)->expected_pid;
+
+    sos_thread_t *worker_thread = worker_threads[thread_index];
+
+    if (expected_pid != worker_thread->assigned_pid) {
+        sync_recursive_mutex_unlock(worker_threads_mutex);
+        return;
+    }
 
     user_process_t *user_process = get_current_user_process_by_thread(thread_index);
 
@@ -15,11 +25,13 @@ void nfs_opendir_cb(int status, struct nfs_context *nfs, void *data, void *priva
     {
         user_process->curr_dir = NULL;
         ZF_LOGE("nfs_opendir failed with error: %s\n", (char *)data);
+        sync_recursive_mutex_unlock(worker_threads_mutex);
         return;
     }
 
     user_process->curr_dir = (struct nfsdir *)data;
-    seL4_Signal(worker_threads[thread_index]->ntfn);
+    seL4_Signal(worker_thread->ntfn);
+    sync_recursive_mutex_unlock(worker_threads_mutex);
 
     return;
 }
@@ -37,7 +49,11 @@ int handle_sos_getdirent()
     struct nfs_context *nfs_context = get_nfs_context();
 
     // calls opendir to get struct nfsdir*
-    nfs_opendir_cb_args_t args = {.thread_index = current_thread->thread_id};
+    nfs_opendir_cb_args_t args = {
+        .thread_index = current_thread->thread_id,
+        .expected_pid = current_thread->assigned_pid
+    };
+
     int ret = nfs_opendir_async(nfs_context, "./", nfs_opendir_cb, (void *)&args);
     if (ret < 0)
     {

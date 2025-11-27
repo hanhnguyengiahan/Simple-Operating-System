@@ -95,7 +95,11 @@ static struct nfsfh* open_elf(uintptr_t path_vaddr, size_t path_len, char** path
 static int read_elf_header(struct nfsfh* elf_fh, unsigned char** elf_header_data) {
     *elf_header_data = malloc(PAGE_SIZE_4K);
     
-    nfs_pread_cb_args_t args = {.thread_index = current_thread->thread_id, .read_buf = *elf_header_data};
+    nfs_pread_cb_args_t args = {
+        .thread_index = current_thread->thread_id,
+        .read_buf = *elf_header_data,
+        .expected_pid = current_thread->assigned_pid
+    };
     
     int status = nfs_pread_wrapper(elf_fh, &args, 0, PAGE_SIZE_4K);
 
@@ -132,55 +136,9 @@ static int close_elf(struct nfsfh* fh) {
     return 0;
 }
 
-typedef struct sos_stat_cb_args {
-    int thread_index;
-    sos_stat_t elf_stat;
-    int status;
-} sos_stat_cb_args_t;
-
-void nfs_stat_cb(int err, struct nfs_context *nfs, void *data, void *private_data)
-{
-    sos_stat_cb_args_t *ret_private_data = (sos_stat_cb_args_t *)private_data;
-
-    int thread_index = ret_private_data->thread_index;
-
-    if (err < 0)
-    {
-        ZF_LOGE("error: %d, error msg: %s\n", err, (char *)data);
-        ret_private_data->status = -1;
-        seL4_Signal(worker_threads[thread_index]->ntfn);
-        return;
-    }
-
-    struct nfs_stat_64 *nfs_stat = (struct nfs_stat_64 *)data;
-    sos_stat_t sos_stat = {
-        .st_atime   = nfs_stat->nfs_atime, 
-        .st_ctime   = nfs_stat->nfs_ctime,
-        .st_size    = nfs_stat->nfs_size,
-        .st_type    = ST_FILE,
-        .st_fmode   = 0
-    };
-    
-    if (nfs_stat->nfs_mode & S_IRUSR)
-    {
-        sos_stat.st_fmode |= FM_READ;
-    }
-    if (nfs_stat->nfs_mode & S_IWUSR)
-    {
-        sos_stat.st_fmode |= FM_WRITE;
-    }
-    if (nfs_stat->nfs_mode & S_IXUSR)
-    {
-        sos_stat.st_fmode |= FM_EXEC;
-    }
-
-    ret_private_data->elf_stat = sos_stat;
-    seL4_Signal(worker_threads[thread_index]->ntfn);
-}
-
 static int get_elf_stat(const char* path, sos_stat_t* elf_stat) {
     struct nfs_context *nfs_context = get_nfs_context();
-    sos_stat_cb_args_t private_data = {
+    nfs_stat_cb_args_t private_data = {
         .thread_index = current_thread->thread_id,
         .status = 0
     };
@@ -199,7 +157,7 @@ static int get_elf_stat(const char* path, sos_stat_t* elf_stat) {
         return -1;
     }
 
-    *elf_stat = private_data.elf_stat;
+    *elf_stat = private_data.sos_stat;
     return 0;
 }
 
@@ -227,7 +185,11 @@ static uintptr_t* get_vsyscall_offset_wrt_elf(elf_t *elf_file, struct nfsfh *elf
         ZF_LOGE("Failed to allocate memory for section headers");
         return NULL;
     }
-    nfs_pread_cb_args_t args = {.thread_index = current_thread->thread_id, .read_buf = section_headers };
+    nfs_pread_cb_args_t args = {
+        .thread_index = current_thread->thread_id,
+        .read_buf = section_headers,
+        .expected_pid = current_thread->assigned_pid
+    };
 
     if (nfs_pread_wrapper(elf_fh, &args, section_table_offset, section_headers_total_size)) {
         ZF_LOGE("Failed to read section table");
@@ -250,7 +212,11 @@ static uintptr_t* get_vsyscall_offset_wrt_elf(elf_t *elf_file, struct nfsfh *elf
         size_t section_name_offset_wrt_elf = str_table_offset + section_name_offset_wrt_str_table;
 
         /* read the section name */
-        args = (nfs_pread_cb_args_t) {.thread_index = current_thread->thread_id, .read_buf = section_name };
+        args = (nfs_pread_cb_args_t) {
+            .thread_index = current_thread->thread_id,
+            .read_buf = section_name,
+            .expected_pid = current_thread->assigned_pid
+        };
         if (nfs_pread_wrapper(elf_fh, &args, section_name_offset_wrt_elf, __vsyscall_str_size)) {
             ZF_LOGI("Failed to read section name at section number %d. Continue to read other section names.", i);
             continue;
@@ -290,7 +256,11 @@ static uintptr_t init_process_stack(cspace_t *cspace, seL4_CPtr local_vspace, el
         sysinfo_section = *sysinfo;
     } else { /* for elf originated from NFS, we've only loaded the header, hence we couldn't just read the content from *sysinfo. */
         uintptr_t vsyscall_offset = get_vsyscall_offset_wrt_elf(elf_file, elf_fh);
-        nfs_pread_cb_args_t args = {.thread_index = current_thread->thread_id, .read_buf = &sysinfo_section };
+        nfs_pread_cb_args_t args = {
+            .thread_index = current_thread->thread_id, 
+            .read_buf = &sysinfo_section,
+            .expected_pid = current_thread->assigned_pid
+        };
         if (nfs_pread_wrapper(elf_fh, &args, vsyscall_offset, sizeof(sysinfo_section))) {
             return 0;
         }

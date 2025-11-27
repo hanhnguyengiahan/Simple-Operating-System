@@ -2,10 +2,12 @@
 #include <stddef.h>
 #include <sel4/shared_types_gen.h>
 #include <aos/sel4_zf_logif.h>
+#include <sossharedapi/process.h>
 
 typedef struct sos_open_cb_args
 {
     int thread_index;
+    pid_t expected_pid;
     int fd;
     int err;
 } sos_open_cb_args_t;

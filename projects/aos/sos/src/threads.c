@@ -30,6 +30,7 @@
 
 __thread sos_thread_t *current_thread = NULL;
 sos_thread_t *worker_threads[MAX_WORKER_THREADS] = { NULL };
+sync_recursive_mutex_t* worker_threads_mutex;
 
 static seL4_CPtr sched_ctrl_start;
 static seL4_CPtr sched_ctrl_end;
@@ -46,12 +47,15 @@ void init_threads(seL4_CPtr _ipc_ep, seL4_CPtr _fault_ep, seL4_CPtr sched_ctrl_s
 }
 
 sos_thread_t *get_available_worker_thread() {
+    sync_recursive_mutex_lock(worker_threads_mutex);
+    sos_thread_t *worker_thread = NULL;
     for (int i = 0; i < MAX_WORKER_THREADS; ++i) {
         if (worker_threads[i]->assigned_pid == -1) {
-            return worker_threads[i];
+            worker_thread = worker_threads[i];
         }
     }
-    return NULL;
+    sync_recursive_mutex_unlock(worker_threads_mutex);
+    return worker_thread;
 }
 
 /* leaking a lot of memory if failed! */

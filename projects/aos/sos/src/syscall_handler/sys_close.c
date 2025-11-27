@@ -45,7 +45,10 @@ int handle_sos_close(size_t fd)
     }
 
     struct nfs_context *nfs_context = get_nfs_context();
-    nfs_close_cb_args_t args = {.thread_index = current_thread->thread_id};
+    nfs_close_cb_args_t args = {
+        .thread_index = current_thread->thread_id,
+        .expected_pid = current_thread->assigned_pid
+    };
     int ret = nfs_close_wrapper(file->fh, &args);
     if (ret == -1) {
         ZF_LOGE("Failed to close file, fd = %d\n", fd);
