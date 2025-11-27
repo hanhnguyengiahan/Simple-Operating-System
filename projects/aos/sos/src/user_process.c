@@ -4,8 +4,10 @@
 #include "cap_utils.h"
 #include <clock/clock.h>
 #include <sossharedapi/process.h>
+#include "waitlist.h"
 
 extern cspace_t cspace;
+sync_recursive_mutex_t *user_processes_mutex;
 
 user_process_t *user_processes[MAX_NUM_PROCESSES] = {NULL};
 SGLIB_DEFINE_QUEUE_FUNCTIONS(pid_queue_t, pid_free_record_t, arr, i, j, MAX_NUM_PROCESSES + 1);
@@ -55,14 +57,23 @@ int delete_user_process(int pid) {
     printf("delete user_process\n");
     if (pid < 0 || pid >= MAX_NUM_PROCESSES) return -1;
 
+    sync_recursive_mutex_lock(user_processes_mutex);
+    
     user_process_t *user_process = user_processes[pid];
+    if (user_process == NULL) {
+        ZF_LOGE("Attempting to delete a non-existing process");
+        sync_recursive_mutex_unlock(user_processes_mutex);
+        return -1;
+    }
     signal_then_destroy_caps(user_process->waitlist);
 
+    user_processes[pid] = NULL;
 
     /* First, suspend the thread so our subsequent destruction steps don't cause any fault/unexpected behaviour. */
     seL4_Error err = seL4_TCB_Suspend(user_process->tcb);
     if (err != seL4_NoError) {
         ZF_LOGE("Failed to suspend user process, seL4_Error=%d", err);
+        sync_recursive_mutex_unlock(user_processes_mutex);
         return -1;
     }
 
@@ -116,6 +127,8 @@ int delete_user_process(int pid) {
     current_thread->assigned_pid = -1;
 
     printf("free user process");
+    sync_recursive_mutex_unlock(user_processes_mutex);
+
     return 0;
 }
 

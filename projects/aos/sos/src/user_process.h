@@ -50,8 +50,10 @@ struct user_process
     vfs_t *vfs;
 };
 typedef struct user_process user_process_t;
+
 #define MAX_NUM_PROCESSES 16
 extern user_process_t *user_processes[MAX_NUM_PROCESSES];
+extern sync_recursive_mutex_t *user_processes_mutex;
 
 /*  Represents a PID that has been freed and the timestamp at which it became
     available for reuse. Entries of this type are stored in a queue so the
