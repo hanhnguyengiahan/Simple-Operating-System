@@ -9,23 +9,37 @@
 
 void sos_open_callback(int err, struct nfs_context *nfs, void *data, void *private_data)
 {
-    sos_open_cb_args_t *ret_private_data = (sos_open_cb_args_t *)private_data;
-    int thread_index = ret_private_data->thread_index;
-    int fd = ret_private_data->fd;
+    sync_recursive_mutex_lock(worker_threads_mutex);
+
+    sos_open_cb_args_t *args = (sos_open_cb_args_t *)private_data;
+
+    int thread_index    = args->thread_index;
+    int fd              = args->fd;
+    pid_t expected_pid  = args->expected_pid;
+
+    sos_thread_t *worker_thread = worker_threads[thread_index];
+    
+    if (expected_pid != worker_thread->assigned_pid) {
+        sync_recursive_mutex_unlock(worker_threads_mutex);
+        return;
+    }
+
     user_process_t *user_process = get_current_user_process_by_thread(thread_index);
 
     if (err < 0)
     {
         ZF_LOGE("error: %d, error msg: %s\n", err, (char *)data);
-        ret_private_data->err = err;
-        seL4_Signal(worker_threads[thread_index]->ntfn);
+        args->err = err;
+        seL4_Signal(worker_thread->ntfn);
+        sync_recursive_mutex_unlock(worker_threads_mutex);
         return;
     }
 
     struct nfsfh *nfsfh = (struct nfsfh *)data;
     user_process->vfs->fd_table[fd].fh = nfsfh;
 
-    seL4_Signal(worker_threads[thread_index]->ntfn);
+    seL4_Signal(worker_thread->ntfn);
+    sync_recursive_mutex_unlock(worker_threads_mutex);
 }
 
 int handle_sos_open_nwcs(fmode_t mode)
@@ -142,6 +156,7 @@ int handle_sos_open()
     private_data->thread_index = current_thread->thread_id;
     private_data->fd = fd;
     private_data->err = 0;
+    private_data->expected_pid = current_thread->assigned_pid;
 
     int err = nfs_open_async(nfs_context, temp_path_buf, mode | O_CREAT, sos_open_callback, private_data);
 

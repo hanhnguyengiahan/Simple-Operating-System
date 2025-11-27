@@ -59,6 +59,7 @@ typedef void thread_main_f(void *);
 
 extern __thread sos_thread_t *current_thread;
 extern sos_thread_t *worker_threads[MAX_WORKER_THREADS];
+extern sync_recursive_mutex_t* worker_threads_mutex;
 
 void init_threads(seL4_CPtr ipc_ep, seL4_CPtr fault_ep, seL4_CPtr sched_ctrl_start_, seL4_CPtr sched_ctrl_end_);
 sos_thread_t *get_available_worker_thread();

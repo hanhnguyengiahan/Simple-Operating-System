@@ -380,7 +380,11 @@ NORETURN void *main_continued(UNUSED void *arg)
     for (size_t id = 1; id < MAX_WORKER_THREADS; ++id) {
         create_worker_thread(id, syscall_loop, true);
     }
-
+    
+    /* Initialize a mutex for thread pool */
+    worker_threads_mutex = malloc(sizeof(sync_recursive_mutex_t));
+    sync_recursive_mutex_new(worker_threads_mutex);
+    
     /* Create a worker thread for handling interrupts */
     struct syscall_loop_args interrupts_handler_args = { .ep = ipc_ep, .thread_index = -1 };
     

@@ -6,6 +6,7 @@
 #include "mapping.h"
 #include "cap_utils.h"
 #include "backtrace.h"
+#include "threads.h"
 
 extern cspace_t cspace;
 struct nfsfh *pagefile_fh; /* NFS file handle for pagefile */
@@ -22,18 +23,21 @@ SGLIB_DEFINE_QUEUE_FUNCTIONS(pages_queue_t, page_metadata_t *, arr, i, j, PAGES_
 SGLIB_DEFINE_QUEUE_FUNCTIONS(offset_queue_t, size_t, arr, i, j, OFFSET_QUEUE_MAX_SIZE)
 
 typedef struct nfs_open_pagefile_cb_args {
-    seL4_CPtr ntfn;
+    uint32_t thread_index;
+    pid_t expected_pid;
 } nfs_open_pagefile_cb_args_t;
 static void nfs_open_pagefile_cb(int status, UNUSED struct nfs_context *nfs, void *data, UNUSED void *private_data);
 
 typedef struct nfs_pwrite_pagefile_cb_args {
-    seL4_CPtr ntfn;
+    uint32_t thread_index;
+    pid_t expected_pid;
     size_t bytes_written;
 } nfs_pwrite_pagefile_cb_args_t;
 static void nfs_pwrite_pagefile_cb(int status, UNUSED struct nfs_context *nfs, void *data, UNUSED void *private_data);
 
 typedef struct nfs_pread_pagefile_cb_args {
-    seL4_CPtr ntfn;
+    uint32_t thread_index;
+    pid_t expected_pid;
     size_t bytes_read;
     unsigned char* buf;
 } nfs_pread_pagefile_cb_args_t;
@@ -181,13 +185,11 @@ static void write_to_pagefile(page_metadata_t *page_metadata) {
     // write content to pagefile at offset, must ensure all bytes are written
     size_t total_bytes_written = 0;
 
-    // create a notification object
-    seL4_CPtr ntfn;
-    ut_t *ut = create_cap(&ntfn, seL4_NotificationObject, seL4_NotificationBits);
-
-    nfs_pwrite_pagefile_cb_args_t pwrite_cb_args = {.ntfn = ntfn};
+    nfs_pwrite_pagefile_cb_args_t pwrite_cb_args = {
+        .thread_index = current_thread->thread_id,
+        .expected_pid = current_thread->assigned_pid
+    };
     
-
     while (total_bytes_written < PAGE_SIZE_4K) {
         pwrite_cb_args.bytes_written = 0;
         
@@ -199,13 +201,10 @@ static void write_to_pagefile(page_metadata_t *page_metadata) {
                                     nfs_pwrite_pagefile_cb, &pwrite_cb_args);
         ZF_LOGF_IF(ret != 0, "queuing pwrite pagefile failed: %s", nfs_get_error(nfs));
         
-        seL4_Wait(ntfn, NULL);
+        seL4_Wait(current_thread->ntfn, NULL);
         
         total_bytes_written += pwrite_cb_args.bytes_written;
     }
-
-    // free the notification object
-    free_cap(ut, ntfn);
 
     // save the offset to page_metadata
     page_metadata->pagefile_offset = available_offset;
@@ -216,11 +215,10 @@ static void read_from_pagefile(unsigned char* buf, page_metadata_t *page_metadat
 
     size_t total_bytes_read = 0;
 
-    // create a notification object
-    seL4_CPtr ntfn;
-    ut_t *ut = create_cap(&ntfn, seL4_NotificationObject, seL4_NotificationBits);
-    
-    nfs_pread_pagefile_cb_args_t pread_cb_args = {.ntfn = ntfn};
+    nfs_pread_pagefile_cb_args_t pread_cb_args = {
+        .thread_index = current_thread->thread_id,
+        .expected_pid = current_thread->assigned_pid
+    };
     
     while (total_bytes_read < PAGE_SIZE_4K) {
         size_t bytes_to_read = PAGE_SIZE_4K - total_bytes_read;
@@ -231,13 +229,10 @@ static void read_from_pagefile(unsigned char* buf, page_metadata_t *page_metadat
         int ret = nfs_pread_async(nfs, pagefile_fh, offset, bytes_to_read, nfs_pread_pagefile_cb, &pread_cb_args);
         ZF_LOGF_IF(ret != 0, "queuing pread pagefile failed: %s", nfs_get_error(nfs));
         
-        seL4_Wait(ntfn, NULL);
+        seL4_Wait(current_thread->ntfn, NULL);
         
         total_bytes_read += pread_cb_args.bytes_read;
     }
-
-    // free the notification object
-    free_cap(ut, ntfn);
 }
 
 void evict_page() {
@@ -309,29 +304,52 @@ void nfs_open_pagefile_cb(int status, UNUSED struct nfs_context *nfs, void *data
 
 void nfs_pwrite_pagefile_cb(int status, UNUSED struct nfs_context *nfs, void *data, 
                   UNUSED void *private_data)
-{
+{   
+    sync_recursive_mutex_lock(worker_threads_mutex);
     nfs_pwrite_pagefile_cb_args_t *args = private_data;
+
+    pid_t expected_id = args->expected_pid;
+    uint32_t thread_index = args->thread_index;
+    sos_thread_t *worker_thread = worker_threads[thread_index];
+
+    if (expected_id != worker_thread->assigned_pid) {
+        sync_recursive_mutex_unlock(worker_threads_mutex);
+        return;
+    }
 
     if (status < 0) {
         ZF_LOGE("pwrite to pagefile failed with \"%s\"\n", (char *)data);
         args->bytes_written = 0;
-        seL4_Signal(args->ntfn);
+        seL4_Signal(worker_thread->ntfn);
+        sync_recursive_mutex_unlock(worker_threads_mutex);
         return;
     }
 
     args->bytes_written = status;
-    seL4_Signal(args->ntfn);
+    seL4_Signal(worker_thread->ntfn);
+    sync_recursive_mutex_unlock(worker_threads_mutex);
 }
 
 void nfs_pread_pagefile_cb(int status, UNUSED struct nfs_context *nfs, void *data, 
                   UNUSED void *private_data)
 {   
+    sync_recursive_mutex_lock(worker_threads_mutex);
+    
     nfs_pread_pagefile_cb_args_t *args = private_data;
+    pid_t expected_id = args->expected_pid;
+    uint32_t thread_index = args->thread_index;
+    sos_thread_t *worker_thread = worker_threads[thread_index];
+
+    if (expected_id != worker_thread->assigned_pid) {
+        sync_recursive_mutex_unlock(worker_threads_mutex);
+        return;
+    }
 
     if (status < 0) {
         ZF_LOGF("pread from pagefile failed with \"%s\"\n", (char *)data);
         args->bytes_read = 0;
-        seL4_Signal(args->ntfn);
+        seL4_Signal(worker_thread->ntfn);
+        sync_recursive_mutex_unlock(worker_threads_mutex);
         return;
     }
 
@@ -341,5 +359,7 @@ void nfs_pread_pagefile_cb(int status, UNUSED struct nfs_context *nfs, void *dat
         memcpy((void *)args->buf, (const void*)data, status);
     }
 
-    seL4_Signal(args->ntfn);
+    seL4_Signal(worker_thread->ntfn);
+    sync_recursive_mutex_unlock(worker_threads_mutex);
+
 }

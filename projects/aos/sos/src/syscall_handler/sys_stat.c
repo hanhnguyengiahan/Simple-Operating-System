@@ -2,46 +2,7 @@
 #include "../threads.h"
 #include <fcntl.h>
 #include "../user_process.h"
-
-void sos_stat_callback(int err, struct nfs_context *nfs, void *data, void *private_data)
-{
-    sos_stat_cb_args_t *ret_private_data = (sos_stat_cb_args_t *)private_data;
-
-    int thread_index = ret_private_data->thread_index;
-
-    if (err < 0)
-    {
-        ZF_LOGE("error: %d, error msg: %s\n", err, (char *)data);
-        ret_private_data->status = -1;
-        seL4_Signal(worker_threads[thread_index]->ntfn);
-        return;
-    }
-
-    struct nfs_stat_64 *nfs_stat = (struct nfs_stat_64 *)data;
-    sos_stat_t sos_stat = {
-        .st_atime   = nfs_stat->nfs_atime, 
-        .st_ctime   = nfs_stat->nfs_ctime,
-        .st_size    = nfs_stat->nfs_size,
-        .st_type    = ret_private_data->st_type,
-        .st_fmode   = 0
-    };
-    
-    if (nfs_stat->nfs_mode & S_IRUSR)
-    {
-        sos_stat.st_fmode |= FM_READ;
-    }
-    if (nfs_stat->nfs_mode & S_IWUSR)
-    {
-        sos_stat.st_fmode |= FM_WRITE;
-    }
-    if (nfs_stat->nfs_mode & S_IXUSR)
-    {
-        sos_stat.st_fmode |= FM_EXEC;
-    }
-
-    ret_private_data->sos_stat = sos_stat;
-    seL4_Signal(worker_threads[thread_index]->ntfn);
-}
+#include "../nfs_wrapper.h"
 
 int handle_sos_stat()
 {
@@ -73,27 +34,20 @@ int handle_sos_stat()
     }
 
     struct nfs_context *nfs_context = get_nfs_context();
-    sos_stat_cb_args_t private_data = {
+    nfs_stat_cb_args_t args = {
         .thread_index = current_thread->thread_id,
+        .expected_pid = current_thread->assigned_pid,
         .st_type = strcmp(temp_path_buf, "console") == 0 ? ST_SPECIAL : ST_FILE,
         .status = 0
     };
 
-    int err = nfs_stat64_async(nfs_context, temp_path_buf, sos_stat_callback, &private_data);
-    if (err < 0)
-    {
-        ZF_LOGE("An error occured when trying to queue the command nfs_stat64_async. The callback will not be invoked.");
-        free(temp_path_buf);
+    int ret = nfs_stat_wrapper(temp_path_buf, &args);
+    if (ret == -1) {
+        ZF_LOGE("Failed to get file stat\n");
         return -1;
     }
 
-    seL4_Wait(current_thread->ntfn, NULL);
-    if (private_data.status == -1) {
-        free(temp_path_buf);
-        return -1;
-    }
-
-    status = copy_to_user((void *)stat_buf_vaddr, (void *)(&private_data.sos_stat), sizeof(sos_stat_t));
+    status = copy_to_user((void *)stat_buf_vaddr, (void *)(&args.sos_stat), sizeof(sos_stat_t));
 
     free(temp_path_buf);
     return status;
