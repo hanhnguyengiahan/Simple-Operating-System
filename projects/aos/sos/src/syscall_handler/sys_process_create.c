@@ -441,6 +441,12 @@ bool create_process(char *app_name, seL4_CPtr ep, pid_t pid, elf_t* elf_file, st
         return false;
     }   
 
+    /* Init waitlist*/
+    if (init_waitlist(&user_process->waitlist) == -1) {
+        ZF_LOGE("Failed to init waitlist");
+        return false;
+    }
+
     /* Create an IPC buffer */
     err = alloc_map_frame(&cspace, PROCESS_IPC_BUFFER, user_process, seL4_AllRights);
     if (err != 0) {

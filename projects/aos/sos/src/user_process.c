@@ -56,7 +56,8 @@ int delete_user_process(int pid) {
     if (pid < 0 || pid >= MAX_NUM_PROCESSES) return -1;
 
     user_process_t *user_process = user_processes[pid];
-    if (user_process == NULL) return -1;
+    signal_then_destroy_caps(user_process->waitlist);
+
 
     /* First, suspend the thread so our subsequent destruction steps don't cause any fault/unexpected behaviour. */
     seL4_Error err = seL4_TCB_Suspend(user_process->tcb);
@@ -102,9 +103,18 @@ int delete_user_process(int pid) {
     cspace_destroy(&user_process->cspace);
     printf("delete cspace\n");
 
+    /* free mutex */
+    sync_recursive_mutex_destroy(user_process->waitlist->mutex);
+    free(user_process->waitlist->mutex);
+
+    /* free waitlist  */
+    free(user_process->waitlist);
+    printf("signals waiter and clean up\n");
+    
     free(user_process);
-    user_processes[pid] = NULL;
+
     current_thread->assigned_pid = -1;
+
     printf("free user process");
     return 0;
 }

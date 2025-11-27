@@ -5,6 +5,7 @@
 #include <sossharedapi/vfs.h>
 #include <sossharedapi/process.h>
 #include "recursive_mutex.h"
+#include "waitlist.h"
 
 struct page_global_directory;
 typedef struct page_global_directory pgd_t;
@@ -35,6 +36,11 @@ struct user_process
 
     vm_region_t *heap_region;
     vm_region_t *stack_region;
+
+    /** A linkedlist of notification cap whose worker thread is waiting on this user process to exit. 
+     *  On destruction of this process, all notification caps in this linkedlist will be signaled.
+    */
+    waitlist_t *waitlist;
 
     // filesystem
     /* main thread running the callback will assign a (struct nfsdir*) to this variable,
