@@ -70,7 +70,6 @@ int delete_user_process(int pid) {
         sync_recursive_mutex_unlock(user_processes_mutex);
         return -1;
     }
-    signal_then_destroy_caps(user_process->waitlist);
 
     user_processes[pid] = NULL;
 
@@ -119,9 +118,7 @@ int delete_user_process(int pid) {
     cspace_destroy(&user_process->cspace);
     printf("delete cspace\n");
 
-    /* free mutex */
-    sync_recursive_mutex_destroy(user_process->waitlist->mutex);
-    free(user_process->waitlist->mutex);
+    signal_then_destroy_caps(user_process->waitlist); // is it okay to be here, can we move it down?
 
     /* free waitlist  */
     free(user_process->waitlist);
