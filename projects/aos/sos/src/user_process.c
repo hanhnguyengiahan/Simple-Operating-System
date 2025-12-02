@@ -59,7 +59,7 @@ void get_user_process_status(sos_process_t *processes, int num_active_processes)
 void init_free_pids() {
     for (pid_t pid = 0; pid < PROCESSES_POOL_SZ; pid++) {
         /*  let timestamp be 0 initially, so that it would always be available to use at first. */
-        pid_free_record_t record = { .pid = pid, .freed_timestamp = 0 };
+        pid_free_record_t record = { .pid = pid };
         sglib_pid_queue_t_add(&free_pids, record);
     }
     // initialise the mutex
@@ -142,7 +142,7 @@ int delete_user_process(int pid) {
     user_processes[pid] = NULL;
 
     /* add the pid back to the free_pids queue to reuse it */
-    pid_free_record_t pid_free_record = { .pid = pid, .freed_timestamp = get_time()};
+    pid_free_record_t pid_free_record = { .pid = pid };
     sglib_pid_queue_t_add(&free_pids, pid_free_record);
 
     printf("free user process");
@@ -162,21 +162,11 @@ int get_available_pid() {
         return -1;
     }
 
-    int result = -1;
-
-    while (!sglib_pid_queue_t_is_empty(&free_pids)) {
-        pid_free_record_t record = sglib_pid_queue_t_first_element(&free_pids);
-        sglib_pid_queue_t_delete_first(&free_pids);
-        if (get_time() - record.freed_timestamp >= PID_REUSE_COOLDOWN_US) {
-            result = record.pid;
-            break;
-        } else {
-            sglib_pid_queue_t_add(&free_pids, record);
-        }
-    }
+    pid_free_record_t record = sglib_pid_queue_t_first_element(&free_pids);
+    sglib_pid_queue_t_delete_first(&free_pids);
 
     sync_recursive_mutex_unlock(free_pids_mutex);
-    return result;
+    return record.pid;
 }
 
 user_process_t *get_current_user_process_by_thread(uint64_t thread_id)

@@ -68,7 +68,6 @@ extern sync_recursive_mutex_t *user_processes_mutex;
 typedef struct
 {
     pid_t pid;
-    uint64_t freed_timestamp;
 } pid_free_record_t;
 
 /*  A queue that contains the currently free process id
