@@ -44,7 +44,7 @@ int test_buffers(int console_fd) {
 
 
 int main(void) {
-    int pid = sos_process_create("tests");
+    // int pid = sos_process_create("tests");
     // printf("pid returned: %d\n", pid);
     int fd = sos_open("console", O_RDONLY);
     test_buffers(CONSOLE_FD);

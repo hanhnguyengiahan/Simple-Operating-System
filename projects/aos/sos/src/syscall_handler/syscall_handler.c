@@ -14,7 +14,6 @@ seL4_MessageInfo_t handle_syscall(UNUSED seL4_Word badge, UNUSED int num_args, b
     *have_reply = true;
 
     int64_t ret = -1;
-    printf("receives syscall number = %d\n", syscall_number);
     /* Process system call */
     switch (syscall_number)
     {

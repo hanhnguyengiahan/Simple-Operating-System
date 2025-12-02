@@ -219,11 +219,15 @@ int remove_timer(uint32_t id)
         heap_pop_then_free();
 
         reconfigure_timer_to_next_earliest_timeout();
+
+        // removes from used_ids bc it's ready to be used again. 
+        cset__remove(&clock.used_ids, id);
     } else { // add it to a set so we can skip it later during timer_irq
         cset__add(&clock.removed_ids, id);
+
+        // must not remove from used_ids here because later call to register_timer can reuse it.
     }
 
-    cset__remove(&clock.used_ids, id);
     return CLOCK_R_OK;
 }
 
@@ -266,7 +270,12 @@ int timer_irq(
         // skip removed timeout
         bool removed = false;
         cset__contains(&clock.removed_ids, current_timeout_data.id, &removed);
-        if (removed) continue;
+        if (removed) {
+            // can remove from used_ids now because it is ready to be used again
+            cset__remove(&clock.used_ids, current_timeout_data.id);
+            cset__remove(&clock.removed_ids, current_timeout_data.id);
+            continue;
+        }
 
         current_timeout_data.callback(current_timeout_data.id, current_timeout_data.data);
     }
