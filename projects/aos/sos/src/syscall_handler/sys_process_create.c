@@ -555,7 +555,7 @@ int handle_sos_process_create() {
         free(path); /* path can either be freed already or not. Just free it again anyways. */
         return -1;
     }
-    ZF_LOGE("finish open elf\n");
+    // ZF_LOGE("finish open elf\n");
 
     sos_stat_t elf_stat;
     if (get_elf_stat(path, &elf_stat)) {
@@ -565,7 +565,7 @@ int handle_sos_process_create() {
         close_elf(elf_fh);
         return -1;
     }
-    ZF_LOGE("finish get elf stat\n");
+    // ZF_LOGE("finish get elf stat\n");
 
     if (!(elf_stat.st_fmode & FM_EXEC)) {
         ZF_LOGE("Elf file must be executable");
@@ -584,7 +584,7 @@ int handle_sos_process_create() {
         close_elf(elf_fh);
         return -1;
     }
-    ZF_LOGE("finish read header \n");
+    // ZF_LOGE("finish read header \n");
 
     // make an elf_t out of it
     elf_t elf_file;
