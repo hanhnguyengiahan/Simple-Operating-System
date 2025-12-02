@@ -532,7 +532,7 @@ bool create_process(sos_thread_t* assigned_worker_thread, char *app_name, pid_t 
     user_process->stime = get_time() / 1000;
     user_process->assigned_worker_thread_id = assigned_worker_thread->thread_id;
 
-    printf("Starting %s at %p\n", app_name, (void *) context.pc);
+    // printf("Starting %s at %p\n", app_name, (void *) context.pc);
     err = seL4_TCB_WriteRegisters(user_process->tcb, true, 0, sizeof(context) / sizeof(seL4_Word), &context);
     ZF_LOGE_IF(err, "Failed to write registers");
 

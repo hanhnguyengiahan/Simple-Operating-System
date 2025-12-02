@@ -145,7 +145,7 @@ void nfslib_poll()
     }
 
     if (nfs_service(nfs, pfd.revents) < 0) {
-        printf("nfs_service failed\n");
+        // printf("nfs_service failed\n");
     }
 }
 
@@ -209,9 +209,9 @@ void dhcp_callback(void *cli, int code)
     /* ZF_LOGD("[DHCP] ip: %s", ipstr); */
     ip_octet = ((uint8_t *) &ipaddr.addr)[3];
     pico_ipv4_to_string(ipstr, netmask.addr);
-    printf("DHCP client: netmask %s\n", ipstr);
+    // printf("DHCP client: netmask %s\n", ipstr);
     pico_ipv4_to_string(ipstr, gateway.addr);
-    printf("DHCP client: gateway %s\n", ipstr);
+    // printf("DHCP client: gateway %s\n", ipstr);
 
     dhcp_status = DHCP_STATUS_FINISHED;
 }
@@ -306,6 +306,6 @@ void nfs_mount_cb(int status, UNUSED struct nfs_context *nfs, void *data,
         ZF_LOGF("mount/mnt call failed with \"%s\"\n", (char *)data);
     }
 
-    printf("Mounted nfs dir %s\n", nfs_dir_buf);
+    // printf("Mounted nfs dir %s\n", nfs_dir_buf);
     has_init_network = true;
 }

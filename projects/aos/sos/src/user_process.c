@@ -68,7 +68,7 @@ void init_free_pids() {
 }
 
 int delete_user_process(int pid) {
-    printf("delete user_process\n");
+
     if (pid < 0 || pid >= PROCESSES_POOL_SZ) return -1;
 
     // Protects the destruction from other calls to delete_user_process with the same pid, or sos_process_wait with the same pid.
@@ -90,15 +90,15 @@ int delete_user_process(int pid) {
 
     /* vfs */
     destroy_vfs(user_process->vfs);
-    printf("delete vfs\n");
+
 
     /* linked list of frames - page global directory  */
     destroy_pgd(user_process->page_global_directory, &cspace, user_process->vspace);
-    printf("delete pgd\n");
+
 
     /* vm_regions */
     destroy_vm_regions(user_process->vm_regions);
-    printf("delete vm_region\n");
+
 
     /* IPC buffer has already been freed from `destroy_pgd`. */ 
 
@@ -109,21 +109,21 @@ int delete_user_process(int pid) {
         ZF_LOGF("Failed to delete cap, seL4_Error = %d", del_error);
     }
     cspace_free_slot(&user_process->cspace, user_process->user_ep);
-    printf("delete user_ep");
+
 
     /* TCB object */
     free_cap(user_process->tcb_ut, user_process->tcb);
-    printf("delete tcb\n");
+
 
     /* stack has already been freed from `destroy_pgd`. */
 
     /* vspace */
     free_cap(user_process->vspace_ut, user_process->vspace);
-    printf("delete vspace\n");
+
 
     /* cspace */
     cspace_destroy(&user_process->cspace);
-    printf("delete cspace\n");
+
 
     if (signal_then_destroy_caps(user_process->waitlist) == -1) {
         ZF_LOGE("User process waitlist is NULL");
@@ -131,7 +131,7 @@ int delete_user_process(int pid) {
 
     /* free waitlist  */
     free(user_process->waitlist);
-    printf("signals waiter and clean up\n");
+
     
     sos_thread_t *assigned_worker_thread = get_assigned_worker_thread(user_process);
     if (!assigned_worker_thread) {
@@ -149,7 +149,7 @@ int delete_user_process(int pid) {
     pid_free_record_t pid_free_record = { .pid = pid };
     sglib_pid_queue_t_add(&free_pids, pid_free_record);
 
-    printf("free user process");
+
     sync_recursive_mutex_unlock(user_processes_mutex);
 
     return 0;
@@ -161,7 +161,7 @@ int get_available_pid() {
     sync_recursive_mutex_lock(free_pids_mutex);
 
     if (sglib_pid_queue_t_is_empty(&free_pids)) {
-        printf("free pids queue is empty!!!!\n");
+
         sync_recursive_mutex_unlock(free_pids_mutex);
         return -1;
     }

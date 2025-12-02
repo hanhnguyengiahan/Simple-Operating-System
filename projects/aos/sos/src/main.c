@@ -256,7 +256,7 @@ void nfs_call_loop(seL4_CPtr ep, bool *condition_on_wait) {
 void start_first_process_then_loop(void *arg) {
     struct syscall_loop_args *args = arg;
     /* Start user process */
-    printf("Start first process\n");
+    // printf("Start first process\n");
     bool success = start_first_process(worker_threads[SOS_BOOTSTRAP_THREAD_ID], APP_NAME, args->ep);
     ZF_LOGF_IF(!success, "Failed to start first process");
     syscall_loop(arg);
@@ -328,7 +328,7 @@ NORETURN void *main_continued(UNUSED void *arg)
     void *timer_vaddr = sos_map_device(&cspace, PAGE_ALIGN_4K(TIMER_MAP_BASE), PAGE_SIZE_4K);
 
     /* Initialise the network hardware. */
-    printf("Network init\n");
+    // printf("Network init\n");
     
     network_init(&cspace, timer_vaddr, ntfn);
     nfs_call_loop(ipc_ep, &has_init_network);
@@ -354,7 +354,7 @@ NORETURN void *main_continued(UNUSED void *arg)
 #endif /* CONFIG_SOS_GDB_ENABLED */
 
     /* Initialises the timer */
-    printf("Timer init\n");
+    // printf("Timer init\n");
     start_timer(timer_vaddr);
 
     /* Register an IRQ handler for the timer here. See "irq.h". */
@@ -432,7 +432,7 @@ int main(void)
 
     debug_print_bootinfo(boot_info);
 
-    printf("\nSOS Starting...\n");
+    // printf("\nSOS Starting...\n");
 
     NAME_THREAD(seL4_CapInitThreadTCB, "SOS:root");
 
@@ -451,7 +451,7 @@ int main(void)
     update_vputchar(uart_putchar);
 
     /* test print */
-    printf("SOS Started!\n");
+    // printf("SOS Started!\n");
 
     /* allocate a bigger stack and switch to it -- we'll also have a guard page, which makes it much
      * easier to detect stack overruns */
